@@ -1,75 +1,64 @@
-import praw
-import time
-import logging
-from dotenv import load_dotenv
+import requests
+import json
 import os
+import time
+import random
+import undetected_chromedriver as uc
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.keys import Keys
 
-# Load environment variables
-load_dotenv()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+class RedditBot:
+    def __init__(self, target_post, target_votes, votes_per_minute):
+        self.accounts  = self.load_accounts('accounts.json')
+        self.target_post = target_post
+        self.target_votes = target_votes
+        self.votes_per_minute = votes_per_minute
 
-class UpvoteBot:
-    def __init__(self):
-        self.reddit = praw.Reddit(
-            client_id=os.getenv("REDDIT_CLIENT_ID"),
-            client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-            user_agent="ResearchBot/1.0 (by YOUR_TEAM_NAME)",
-            username=os.getenv("REDDIT_USERNAME"),
-            password=os.getenv("REDDIT_PASSWORD")
+        self.ua = UserAgent()
+
+    def human_type(element, text):
+        for char in text:
+            element.send_keys(char)
+            time.sleep(random.uniform(0.05,0.3))
+
+    def human_scroll(driver):
+        scroll_amounts = [200,300,150,400]
+        for _ in range(random.randint(2,4)):
+            driver.execute_script(f"window.scrollBy(0,{random.choice(scroll_amounts)})")
+            time.sleep(random.uniform(0.5.1.5))
+
+    def get_stealth_driver(proxy=None):
+        mobile_emulation = {
+            "deviceMetrics": {"width": 360, "height": 640, "pixelRatio": 3.0},
+            "userAgent": "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36"
+        }
+        
+        options = uc.ChromeOptions()
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
+        
+        if proxy:
+            options.add_argument(f"--proxy-server={proxy}")
+        
+        driver = uc.Chrome(
+            options=options,
+            version_main=114,  # Match common Chrome versions
+            headless=False,    # Headless mode increases detection risk
+            enable_cdp_events=True
         )
-        self.subreddit_name = "test"  # Target subreddit for testing
-        self.post_limit = 10  # Number of posts to process per run
-        self.dry_run = True  # Set to False to enable upvoting
 
-    def _validate_permissions(self):
-        """Ensure the bot account has necessary permissions."""
-        try:
-            # Check if authenticated user can upvote
-            user = self.reddit.user.me()
-            logging.info(f"Authenticated as: {user}")
-        except Exception as e:
-            logging.error(f"Authentication failed: {e}")
-            raise
+    def load_accounts(filepath):
+        if os.path.exists(filepath, 'r'):
+            try:   
+                with open(filepath) as f:
+                    accounts =  json.laod(f)
+            except json.JSONDecodeError:
+                accounts = []
 
-    def _process_post(self, post):
-        """Upvote a post if criteria are met."""
-        try:
-            # Skip self-upvotes to avoid vote manipulation
-            if post.author == self.reddit.user.me():
-                return
+            for account in accounts:
+                username = account.username
+                password = account.password
+    
 
-            # Add custom logic here (e.g., keyword matching)
-            if not self.dry_run:
-                post.upvote()
-                logging.info(f"Upvoted: {post.title}")
-            else:
-                logging.info(f"[Dry Run] Would upvote: {post.title}")
-        except praw.exceptions.APIException as e:
-            logging.error(f"API Error: {e}")
-
-    def run(self):
-        """Main execution loop."""
-        self._validate_permissions()
-        subreddit = self.reddit.subreddit(self.subreddit_name)
-
-        while True:
-            try:
-                # Process new/hot posts (modify as needed)
-                for post in subreddit.hot(limit=self.post_limit):
-                    self._process_post(post)
-
-                # Respect rate limits (600 requests per 10 minutes)
-                time.sleep(60)  # Adjust based on post_limit
-
-            except Exception as e:
-                logging.error(f"Critical error: {e}")
-                time.sleep(300)  # Backoff on critical failure
-
-if __name__ == "__main__":
-    bot = UpvoteBot()
-    bot.run()
