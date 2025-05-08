@@ -132,12 +132,12 @@ async def run(account_id: int, proxy_config: Dict[str, Any] = None):
 
 def main():
     account_id = 1 # Example account ID
-    proxy_config = {
-        "server": "http://86.38.234.176:6630",  # Replace with actual proxy server
-        "username": "pstvdsop",                   # Replace with actual username
-        "password": "vic5dg5kklfd"                    # Replace with actual password
-    }  # Replace with actual proxy details
-    asyncio.run(run(account_id, proxy_config))
+    # proxy_config = {
+    #     "server": "http://86.38.234.176:6630",  # Replace with actual proxy server
+    #     "username": "pstvdsop",                   # Replace with actual username
+    #     "password": "vic5dg5kklfd"                    # Replace with actual password
+    # }  # Replace with actual proxy details
+    asyncio.run(run(account_id))
 
 if __name__ == "__main__":
     main()
