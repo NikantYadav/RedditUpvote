@@ -16,6 +16,7 @@ from geoip2.errors import AddressNotFoundError
 import pytz
 from typing import Tuple, Dict, Any
 import hashlib
+from nodriver.cdp import network, page
 
 # Configure logging system
 logging.basicConfig(
@@ -98,9 +99,10 @@ class StealthUtils:
     @staticmethod
     async def human_mouse(page, element):
         """Realistic mouse movement using Bézier curves"""
+        target = await element.bounding_box()
         start_x = random.randint(0, 400)
         start_y = random.randint(0, 400)
-        target = await element.rect
+        
         
         # Generate intermediate points using Bézier curve
         points = StealthUtils.generate_bezier_path(
@@ -142,8 +144,8 @@ class StealthUtils:
     @staticmethod
     async def spoof_canvas(page):
         """Canvas fingerprint spoofing using CDP"""
-        await page.cdp.execute(
-            "Page.addScriptToEvaluateOnNewDocument",
+        await page.send(
+            page.addScriptToEvaluateOnNewDocument(
             source="""
             const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
             CanvasRenderingContext2D.prototype.getImageData = function(...args) {
@@ -174,6 +176,7 @@ class StealthUtils:
             }(HTMLCanvasElement.prototype.getContext);
             """
         )
+    )
 
 class AccountManager:
     def __init__(self):
@@ -233,8 +236,6 @@ class RedditStealthSystem:
         self.session_start = time.time()
         self.logger.info(f"New session initialized for account {account['id']}")
 
-    import random
-
     def generate_regional_referrer(self, country):
         """Generate realistic referrer URLs for Reddit posts (no subreddits)."""
         reddit_home = 'https://www.reddit.com/'
@@ -258,8 +259,6 @@ class RedditStealthSystem:
         # Default fallback: reddit homepage and google.com
         default_referrers = [reddit_home, google_map['US'], reddit_post]
         return random.choice(referrer_map.get(country, default_referrers))
-
-
 
     async def generate_persistent_fingerprint(self):
         """Generate geo-consistent browser fingerprint aligned with proxy location"""
@@ -309,12 +308,28 @@ class RedditStealthSystem:
             # =====================
             # User Agent Generation
             # =====================
+
             if not self.account.get('user_agent'):
                 is_mobile = random.random() < locale_config['mobile_probability']
-                fingerprint['user_agent'] = self.fake.user_agent(
-                    android=is_mobile and proxy_country not in ['US', 'JP'],
-                    ios=is_mobile and proxy_country in ['US', 'JP']
-                )
+                if is_mobile:
+                    # Determine target mobile OS based on country
+                    target_os = 'ios' if proxy_country in ['US', 'JP'] else 'android'
+                    
+                    # Generate mobile user agents until matching OS pattern
+                    max_retries = 5
+                    for _ in range(max_retries):
+                        ua = self.fake.user_agent()
+                        if target_os == 'android' and 'Android' in ua:
+                            fingerprint['user_agent'] = ua
+                            break
+                        elif target_os == 'ios' and ('iPhone' in ua or 'iPad' in ua):
+                            fingerprint['user_agent'] = ua
+                            break
+                    else:  # Fallback to any mobile UA
+                        fingerprint['user_agent'] = self.fake.user_agent()
+                else:
+                    # Generate desktop user agent
+                    fingerprint['user_agent'] = self.fake.user_agent()
             
             # =====================
             # Pixel Ratio Calculation
@@ -401,7 +416,7 @@ class RedditStealthSystem:
                 'upload': 2*1024*1024*random.uniform(0.8, 1.2)
             },
             'headers': {
-                **self.fingerprint['core_headers'],
+                **self.fingerprint['headers'],
                 'Cache-Control': random.choice(['max-age=0', 'no-cache']),
                 'Pragma': random.choice(['no-cache', '']),
                 'Accept-Encoding': random.choice(['gzip, deflate', 'gzip'])
@@ -418,46 +433,63 @@ class RedditStealthSystem:
                 self.fingerprint = await self.generate_persistent_fingerprint()
             
             device = self.apply_natural_variations()
-            
-            self.logger.debug(f"Starting virtual display: {self.fingerprint['screen']}")
-            self.display = Display(visible=0, size=tuple(map(int, self.fingerprint['screen'].split('x'))))
+
+            # Start virtual display
+            self.logger.debug(f"Starting virtual display: {self.fingerprint['screen_resolution']}")
+            self.display = Display(
+                visible=0, 
+                size=tuple(map(int, self.fingerprint['screen_resolution'].split('x')))
+            )
             self.display.start()
-            
+
             self.logger.info("Launching browser instance with fingerprint parameters")
+
+            # Prepare browser args
+            browser_args = [
+                f'--proxy-server={self.account["proxy"]}',
+                '--disable-blink-features=AutomationControlled',
+                f'--user-agent={self.fingerprint["user_agent"]}',
+                '--force-device-scale-factor=1',
+                '--headless=new',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-hang-monitor',
+                '--disable-component-extensions-with-background-pages',
+                '--disable-sync',
+                '--metrics-recording-only',
+                '--disable-default-apps',
+                '--mute-audio',
+                f'--user-data-dir=./profiles/{self.account["id"]}'
+            ]
+
+            # Prepare mobile emulation options
+            mobile_emulation = {
+                'deviceMetrics': {
+                    'width': int(self.fingerprint['screen_resolution'].split('x')[0]),
+                    'height': int(self.fingerprint['screen_resolution'].split('x')[1]),
+                    'pixelRatio': self.fingerprint['pixel_ratio'],
+                    'touch': True
+                }
+            }
+
+            # Launch browser
             self.browser = await start(
                 browser_executable_path="/home/nikant/Desktop/RedditUpvote/chrome/linux-136.0.7103.92/chrome-linux64/chrome",
                 headless=False,
-                browser_args=[
-                    f'--proxy-server={self.account["proxy"]}',
-                    '--disable-blink-features=AutomationControlled',
-                    f'--user-agent={self.fingerprint["user_agent"]}',
-                    '--force-device-scale-factor=1',
-                    '--headless=new',
-                    '--disable-background-timer-throttling',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-hang-monitor',
-                    '--disable-component-extensions-with-background-pages',
-                    '--disable-sync',
-                    '--metrics-recording-only',
-                    '--disable-default-apps',
-                    '--mute-audio',
-                    f'--user-data-dir=./profiles/{self.account["id"]}'
-                ],
+                browser_args=browser_args,
+                headers={
+                    'Accept-Language': self.fingerprint['locale'],
+                    'Referer': self.fingerprint['referrer']
+                },
                 experimental_options={
-                    'mobileEmulation': {
-                        'deviceMetrics': {
-                            'width': int(self.fingerprint['screen'].split('x')[0]),
-                            'height': int(self.fingerprint['screen'].split('x')[1]),
-                            'pixel_ratio': self.fingerprint['pixel_ratio'],
-                            'touch': True
-                        }
-                    }
+                    'mobileEmulation': mobile_emulation
                 }
             )
-            self.page = await self.browser.new_page()
+
+            self.page = await self.browser.get('about:blank')
             await self.apply_stealth_measures(device)
             self.logger.info("Browser environment ready with stealth measures")
-            
+
         except Exception as e:
             self.logger.critical(f"Browser initialization failed: {str(e)}", exc_info=True)
             raise
@@ -505,7 +537,7 @@ class RedditStealthSystem:
             return False
         finally:
             await self.cleanup()
-    
+
     async def apply_stealth_measures(self, device):
         """Implement anti-detection measures"""
         self.logger.info("Applying advanced stealth measures")
@@ -513,35 +545,39 @@ class RedditStealthSystem:
         try:
             # Network characteristics
             self.logger.debug(f"Emulating network conditions: {device['network_conditions']}")
-            await self.page.cdp.send(
-                "Network.emulateNetworkConditions",
-                offline=False,
-                latency=device['network_conditions']['latency'],
-                downloadThroughput=device['network_conditions']['download'],
-                uploadThroughput=device['network_conditions']['upload']
+            await self.page.send(
+                network.emulateNetworkConditions(
+                    offline=False,
+                    latency=device['network_conditions']['latency'],
+                    downloadThroughput=device['network_conditions']['download'],
+                    uploadThroughput=device['network_conditions']['upload'],
+                    connectionType=device.get('connection_type', 'wifi')
+                )
             )
             
             # Headers and TLS fingerprint
             self.logger.debug("Configuring browser headers and TLS fingerprint")
             curl = Curl(impersonate="chrome120")
-            await self.page.cdp.send(
-                "Network.setExtraHTTPHeaders",
-                headers={**curl.headers, **device['headers']}
+            await self.page.send(
+                network.setExtraHTTPHeaders(
+                    headers={**curl.headers, **device['headers']}
+                )
             )
             
             # Persistent API spoofing
             self.logger.debug("Injecting hardware spoofing scripts")
-            await self.page.cdp.send(
-                "Page.addScriptToEvaluateOnNewDocument",
-                source=f"""
-                Object.defineProperty(navigator, 'deviceMemory', {{
-                    get: () => {self.fingerprint['device_memory']}
-                }});
-                Object.defineProperty(navigator, 'hardwareConcurrency', {{
-                    value: {random.randint(4, 8)}
-                }});
-                window.chrome = {{ app: {{ isInstalled: true }} }};
-                """
+            await self.page.send(
+                page.addScriptToEvaluateOnNewDocument(
+                    source=f"""
+                    Object.defineProperty(navigator, 'deviceMemory', {{
+                        get: () => {self.fingerprint['device_memory']}
+                    }});
+                    Object.defineProperty(navigator, 'hardwareConcurrency', {{
+                        value: {random.randint(4, 8)}
+                    }});
+                    window.chrome = {{ app: {{ isInstalled: true }} }};
+                    """
+                )
             )
             
             # Canvas/WebGL fingerprint consistency
@@ -677,7 +713,7 @@ class RedditStealthSystem:
         try:
             if self.browser:
                 self.logger.debug("Closing browser instance")
-                await self.browser.close()
+                self.browser.stop()
             if self.display:
                 self.logger.debug("Stopping virtual display")
                 self.display.stop()

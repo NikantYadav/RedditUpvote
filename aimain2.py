@@ -1,332 +1,379 @@
 import asyncio
 import random
 import json
+import os
 import time
 import logging
-import os
-import hashlib
 from datetime import datetime
+import humanfriendly
 from faker import Faker
-from pyvirtualdisplay import Display
-from nodriver import start
+from geoip2 import database
+from geoip2.errors import AddressNotFoundError
+import pytz
+import hashlib
+from camoufox.async_api import AsyncCamoufox
+from browserforge.fingerprints import FingerprintGenerator
 
-# Logging Configuration
-class BotLogger:
+# Configure logging system
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+    handlers=[
+        logging.FileHandler('reddit_stealth.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+class GeoUtils:
     def __init__(self):
-        self.logger = logging.getLogger('RedditBot')
-        self.logger.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-
-        # File Handler with Rotation
-        file_handler = logging.handlers.RotatingFileHandler(
-            'bot_operations.log',
-            maxBytes=5*1024*1024,
-            backupCount=3,
-            encoding='utf-8'
-        )
-        file_handler.setFormatter(formatter)
-
-        # Console Handler
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-
-        self.logger.addHandler(file_handler)
-        self.logger.addHandler(console_handler)
-
-        self.logger.info("Logger initialized successfully")
-
-logger = BotLogger().logger
-
-# Core Components
-class FingerprintGenerator:
-    def __init__(self):
-        self.faker = Faker()
-        self.device_profiles = [
-            {
-                'name': 'Desktop_Windows',
-                'type': 'desktop',
-                'os': 'Windows 10',
-                'resolutions': ['1920x1080', '2560x1440'],
-                'user_agent_templates': [
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version} Safari/537.36',
-                    'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version} Safari/537.36'
-                ],
-                'fonts': ['Arial', 'Times New Roman', 'Verdana']
-            },
-            {
-                'name': 'Mobile_Android',
-                'type': 'mobile',
-                'os': 'Android 13',
-                'resolutions': ['1080x2340', '1440x3200'],
-                'user_agent_templates': [
-                    'Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version} Mobile Safari/537.36'
-                ],
-                'fonts': ['Roboto', 'Noto Sans', 'Droid Sans']
-            }
-        ]
-
-    def generate_fingerprint(self, proxy):
-        profile = random.choice(self.device_profiles)
-        chrome_version = f"{random.randint(115,125)}.0.{random.randint(1000,9999)}"
-        
-        return {
-            'user_agent': random.choice(profile['user_agent_templates']).format(version=chrome_version),
-            'resolution': random.choice(profile['resolutions']),
-            'platform': profile['os'],
-            'fonts': profile['fonts'],
-            'device_type': profile['type'],
-            'proxy': proxy,
-            'chrome_version': chrome_version,
-            'webgl_hash': hashlib.sha256(str(time.time()).encode()).hexdigest()[:16],
-            'generated_at': datetime.utcnow().isoformat()
+        self.geo_reader = None
+        self.locale_map = {
+            'US': 'en_US',
+            'DE': 'de_DE',
+            'FR': 'fr_FR',
+            'JP': 'ja_JP',
         }
 
-class AccountManager:
-    def __init__(self):
-        self.accounts_file = 'accounts.json'
-        self.accounts = self.load_or_create_accounts()
-
-    def load_or_create_accounts(self):
-        if not os.path.exists(self.accounts_file):
-            logger.warning("Accounts file not found, creating default")
-            default_accounts = [
-                {
-                    "id": f"acc_{x}",
-                    "proxy": f"user:pass@192.168.1.{x}:8080",
-                    "usage_count": 0,
-                    "last_used": 0,
-                    "status": "active"
-                } for x in range(1, 6)
-            ]
-            self.save_accounts(default_accounts)
-            return default_accounts
+    COUNTRY_CONFIG = {
+        'US': {
+            'faker_locale': 'en_US',
+            'timezone': 'America/New_York',
+            'http_accept_language': 'en-US,en;q=0.9',
+            'common_resolution': '1920x1080',
+            'mobile_probability': 0.4,
+            'platform_header': '"Windows"',
+            'latency_range': (28, 8),
+            'base_download': 150,
+            'base_upload': 50,
+            'memory_options': [8, 16, 32]
+        },
+        'DE': {
+            'faker_locale': 'de_DE',
+            'timezone': 'Europe/Berlin',
+            'http_accept_language': 'de-DE,de;q=0.9,en;q=0.8',
+            'common_resolution': '1920x1080',
+            'mobile_probability': 0.5,
+            'platform_header': '"Android"',
+            'latency_range': (32, 6),
+            'base_download': 120,
+            'base_upload': 40,
+            'memory_options': [4, 8, 16]
+        },
+        'JP': {
+            'faker_locale': 'ja_JP',
+            'timezone': 'Asia/Tokyo',
+            'http_accept_language': 'ja-JP,ja;q=0.9',
+            'common_resolution': '1440x2560',
+            'mobile_probability': 0.7,
+            'platform_header': '"iPhone"',
+            'latency_range': (45, 12),
+            'base_download': 100,
+            'base_upload': 30,
+            'memory_options': [6, 8, 12]
+        }
+    }
         
-        with open(self.accounts_file, 'r') as f:
-            return json.load(f)
+    def get_locale_settings(self, country_code):
+        return self.COUNTRY_CONFIG.get(country_code, self.COUNTRY_CONFIG['US'])
 
-    def get_available_account(self):
-        now = time.time()
-        valid = [acc for acc in self.accounts 
-                if acc['usage_count'] < 5 
-                and (now - acc['last_used']) > 1800
-                and acc['status'] == 'active']
-        return random.choice(valid) if valid else None
-
-    def save_accounts(self, accounts=None):
-        with open(self.accounts_file, 'w') as f:
-            json.dump(accounts or self.accounts, f, indent=2)
+    def get_proxy_country(self, proxy_url):
+        try:
+            ip = proxy_url.split('@')[-1].split(':')[0]
+            return 'US'
+        except Exception:
+            return 'US'
 
 class StealthUtils:
     @staticmethod
-    async def human_interaction(page, element):
-        try:
-            start_x = random.randint(0, 300)
-            start_y = random.randint(0, 300)
-            target = await element.rect
+    async def human_mouse(page, element):
+        target = await element.bounding_box()
+        start_x = random.randint(0, 400)
+        start_y = random.randint(0, 400)
+        
+        points = StealthUtils.generate_bezier_path(
+            (start_x, start_y),
+            (target['x'] + target['width']/2, target['y'] + target['height']/2),
+            spread=random.uniform(0.8, 1.2)
+        )
+        
+        for x, y in points:
+            await page.mouse.move(x, y)
+            await asyncio.sleep(random.uniform(0.01, 0.05))
             
-            logger.info(f"Moving from ({start_x}, {start_y}) to ({target['x']}, {target['y']})")
+        await page.mouse.click(
+            target['x'] + target['width']/2, 
+            target['y'] + target['height']/2,
+            delay=random.randint(80, 150)
+        )
 
-            # Generate intermediate points
-            steps = random.randint(15, 25)
-            x_step = (target['x'] - start_x) / steps
-            y_step = (target['y'] - start_y) / steps
-            
-            for i in range(steps):
-                x = start_x + x_step * i + random.uniform(-5, 5)
-                y = start_y + y_step * i + random.uniform(-5, 5)
-                await page.mouse.move(x, y)
-                await asyncio.sleep(random.uniform(0.05, 0.2))
-            
-            await page.mouse.click(target['x'], target['y'], delay=random.randint(100, 250))
-            logger.debug("Click completed successfully")
-            
-        except Exception as e:
-            logger.error(f"Interaction failed: {str(e)}")
-            raise
 
     @staticmethod
-    async def spoof_environment(page, fingerprint):
-        try:
-            logger.info("Applying environment spoofing")
-            
-            # Set user agent
-            await page.cdp.send(
-                "Network.setUserAgentOverride",
-                userAgent=fingerprint['user_agent']
-            )
-            
-            # Spoof WebGL
-            await page.cdp.send(
-                "Page.addScriptToEvaluateOnNewDocument",
-                source=f"""
-                HTMLCanvasElement.prototype.getContext = function(orig) {{
-                    return function(type) {{
-                        const ctx = orig.apply(this, [type]);
-                        if(type === 'webgl') {{
-                            const ext = ctx.getExtension('WEBGL_debug_renderer_info');
-                            ctx.getParameter = function(param) {{
-                                return param === ext.UNMASKED_RENDERER_WEBGL 
-                                    ? '{fingerprint['webgl_hash']}' 
-                                    : ctx.__proto__.getParameter(param);
-                            }};
-                        }}
-                        return ctx;
-                    }};
-                }}(HTMLCanvasElement.prototype.getContext);
-                """
-            )
-            
-            # Remove automation flags
-            await page.cdp.send(
-                "Page.addScriptToEvaluateOnNewDocument",
-                source="delete navigator.__proto__.webdriver;"
-            )
-            
-            logger.debug("Environment spoofing completed")
-            
-        except Exception as e:
-            logger.error(f"Spoofing failed: {str(e)}")
-            raise
+    def generate_bezier_path(start, end, spread=1.0, num_points=20):
+        cp1 = (
+            start[0] + (end[0] - start[0]) * 0.25 + random.randint(-50, 50),
+            start[1] + (end[1] - start[1]) * 0.25 + random.randint(-50, 50)
+        )
+        cp2 = (
+            start[0] + (end[0] - start[0]) * 0.75 + random.randint(-50, 50),
+            start[1] + (end[1] - start[1]) * 0.75 + random.randint(-50, 50)
+        )
+        
+        t_values = [i/(num_points-1) for i in range(num_points)]
+        return [StealthUtils.bezier_point(start, cp1, cp2, end, t) for t in t_values]
 
-class RedditVoter:
+    @staticmethod
+    def bezier_point(p0, p1, p2, p3, t):
+        x = (1-t)**3 * p0[0] + 3*(1-t)**2*t*p1[0] + 3*(1-t)*t**2*p2[0] + t**3*p3[0]
+        y = (1-t)**3 * p0[1] + 3*(1-t)**2*t*p1[1] + 3*(1-t)*t**2*p2[1] + t**3*p3[1]
+        return (x, y)
+
+class AccountManager:
+    def __init__(self):
+        self.logger = logging.getLogger('AccountManager')
+        self.accounts = []
+        self.load_accounts()
+        
+    def load_accounts(self):
+        try:
+            if os.path.exists("accounts/accounts.json"):
+                with open("accounts/accounts.json") as f:
+                    self.accounts = json.load(f)
+                self.logger.info(f"Loaded {len(self.accounts)} accounts")
+            else:
+                self.logger.warning("No accounts file found")
+        except Exception as e:
+            self.logger.error(f"Error loading accounts: {str(e)}")
+            self.accounts = []
+                
+    def get_available_accounts(self):
+        valid_accounts = []
+        for acc in self.accounts:
+            last_used_date = datetime.fromtimestamp(acc['last_used']).date()
+            today = datetime.today().date()
+            if last_used_date < today:
+                acc['daily_uses'] = 0
+                acc['last_used'] = 0
+
+            time_since_last = time.time() - acc['last_used']
+            if acc['daily_uses'] < 5 and time_since_last > 1800:
+                valid_accounts.append(acc)
+        return valid_accounts
+
+    def save_accounts(self):
+        try:
+            os.makedirs("accounts", exist_ok=True)
+            with open("accounts/accounts.json", "w") as f:
+                json.dump(self.accounts, f, indent=2)
+        except Exception as e:
+            self.logger.error(f"Error saving accounts: {str(e)}")
+
+class RedditStealthSystem:
     def __init__(self, account):
         self.account = account
-        self.fingerprint = FingerprintGenerator().generate_fingerprint(account['proxy'])
+        self.logger = logging.getLogger(f'StealthSystem:{account["id"]}')
         self.browser = None
         self.page = None
+        self.fingerprint = None
 
-    async def initialize(self):
+    async def __aenter__(self):
+        await self.init_environment()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.cleanup()
+
+    async def generate_fingerprint(self):
+        geo_util = GeoUtils()
+        proxy_country = geo_util.get_proxy_country(self.account['proxy'])
+        locale_config = geo_util.get_locale_settings(proxy_country)
+
+        generator = FingerprintGenerator()
+        fingerprint = generator.generate(
+            os='win' if 'Windows' in locale_config['platform_header'] else 'mac',
+            browser="firefox",
+            device="desktop" if locale_config['mobile_probability'] < 0.5 else "mobile",
+            locale=locale_config['http_accept_language'],
+            resolution=tuple(map(int, locale_config['common_resolution'].split('x'))),
+            browser_version="latest"
+        )
+
+        fingerprint.update({
+            'timezone': locale_config['timezone'],
+            'referrer': self.generate_regional_referrer(proxy_country),
+            'network_conditions': {
+                'latency': random.normalvariate(*locale_config['latency_range']),
+                'download': locale_config['base_download'] * 1024 * 1024,
+                'upload': locale_config['base_upload'] * 1024 * 1024
+            }
+        })
+        return fingerprint
+
+    def generate_regional_referrer(self, country):
+        referrer_map = {
+            'US': ['https://www.google.com/', 'https://reddit.com/'],
+            'DE': ['https://www.google.de/', 'https://reddit.com/'],
+            'JP': ['https://www.google.co.jp/', 'https://reddit.com/'],
+        }
+        return random.choice(referrer_map.get(country, ['https://www.google.com/']))
+
+    async def init_environment(self):
         try:
-            logger.info(f"Initializing browser for account {self.account['id']}")
+            self.fingerprint = await self.generate_fingerprint()
             
-            # Start virtual display
-            Display(visible=0, size=tuple(map(int, self.fingerprint['resolution'].split('x')))).start()
+            self.browser = await AsyncCamoufox(
+                proxy=self.account['proxy'],
+                geoip=True,
+                headless="virtual",
+                humanize=1.5,
+                fingerprint=self.fingerprint,
+                user_data_dir=f"./profiles/{self.account['id']}"
+            ).start()
+
+            self.page = await self.browser.new_page()
             
-            # Launch browser
-            self.browser = await start(
-                browser_args=[
-                    f'--proxy-server={self.account["proxy"]}',
-                    '--disable-blink-features=AutomationControlled',
-                    '--headless=new',
-                    f'--user-agent={self.fingerprint["user_agent"]}'
-                ]
+            await self.page.context.set_network_conditions(
+                offline=False,
+                download_throughput=self.fingerprint['network_conditions']['download'],
+                upload_throughput=self.fingerprint['network_conditions']['upload'],
+                latency=self.fingerprint['network_conditions']['latency']
+            )
+
+            await self.page.set_extra_http_headers({
+                'Accept-Language': self.fingerprint['headers']['accept-language'],
+                'Referer': self.fingerprint['referrer']
+            })
+
+            self.logger.info("Browser environment ready")
+            return self
+
+        except Exception as e:
+            self.logger.error(f"Initialization failed: {str(e)}")
+            raise
+
+    async def execute_stealth_vote(self, post_url):
+        try:
+            if not os.path.exists(f"profiles/{self.account['id']}/session.json"):
+                if not await self.initialize_profile():
+                    return False
+
+            await self.page.goto(post_url, wait_until='networkidle')
+            await self.organic_behavior()
+
+            upvote_btn = await self.page.wait_for_selector(
+                '[data-click-id="upvote"], [aria-label="Upvote"]',
+                timeout=20000
             )
             
-            self.page = await self.browser.new_page()
-            await StealthUtils.spoof_environment(self.page, self.fingerprint)
-            return True
+            await StealthUtils.human_mouse(self.page, upvote_btn)
             
-        except Exception as e:
-            logger.error(f"Initialization failed: {str(e)}")
-            return False
-
-    async def perform_vote(self, post_url):
-        try:
-            logger.info(f"Starting voting process on {post_url}")
-            
-            # Navigate to post
-            await self.page.goto(post_url, wait_until='networkidle2')
-            
-            # Simulate human behavior
-            await self._simulate_activity()
-            
-            # Find and click upvote
-            upvote_button = await self.page.wait_for_selector('[data-click-id="upvote"]', timeout=15000)
-            await StealthUtils.human_interaction(self.page, upvote_button)
-            
-            # Validate success
-            await asyncio.sleep(2)
-            is_voted = await self.page.evaluate('''() => {
-                const btn = document.querySelector('[data-click-id="upvote"]');
-                return btn && btn.getAttribute('aria-pressed') === 'true';
-            }''')
-            
-            if is_voted:
-                self.account['usage_count'] += 1
+            if await self.validate_vote():
+                self.account['daily_uses'] += 1
                 self.account['last_used'] = time.time()
-                logger.info("Vote successfully registered")
                 return True
-            
-            logger.warning("Vote verification failed")
             return False
-            
+
         except Exception as e:
-            logger.error(f"Voting process failed: {str(e)}")
+            self.logger.error(f"Voting failed: {str(e)}")
             return False
-            
-        finally:
-            if self.browser:
-                await self.browser.close()
-            logger.info("Browser instance closed")
 
-    async def _simulate_activity(self):
-        """Simulate human-like browsing patterns"""
-        actions = [
-            self._random_scroll,
-            self._random_mouse_movement,
-            self._random_delay
-        ]
+    async def organic_behavior(self):
+        if random.random() > 0.3:
+            await asyncio.sleep(random.uniform(2, 5))
+            await self.page.mouse.wheel(delta_y=random.randint(300, 700))
         
-        for _ in range(random.randint(3, 5)):
-            await random.choice(actions)()
+        for _ in range(random.randint(2, 4)):
+            x = random.randint(0, 400)
+            y = random.randint(0, 800)
+            await self.page.mouse.move(x, y, steps=random.randint(10, 20))
+            await asyncio.sleep(random.uniform(0.2, 1.0))
 
-    async def _random_scroll(self):
-        scroll_amount = random.randint(300, 800)
-        await self.page.mouse.wheel(delta_y=scroll_amount)
-        logger.debug(f"Scrolled {scroll_amount}px")
-        await asyncio.sleep(random.uniform(0.5, 1.5))
-
-    async def _random_mouse_movement(self):
-        x = random.randint(0, 1920)
-        y = random.randint(0, 1080)
-        await self.page.mouse.move(x, y, steps=random.randint(15, 30))
-        logger.debug(f"Moved mouse to ({x}, {y})")
-
-    async def _random_delay(self):
-        delay = random.normalvariate(3, 0.5)
-        logger.debug(f"Delaying for {delay:.2f}s")
-        await asyncio.sleep(delay)
-
-class VotingOrchestrator:
-    def __init__(self):
-        self.account_manager = AccountManager()
-        self.target_url = "https://www.reddit.com/r/test/comments/abc123"
-        self.target_votes = 100
-
-    async def run(self):
-        logger.info(f"Starting voting campaign for {self.target_votes} votes")
-        success_count = 0
-        
-        while success_count < self.target_votes:
-            account = self.account_manager.get_available_account()
-            if not account:
-                logger.warning("No available accounts, waiting...")
-                await asyncio.sleep(300)
-                continue
+    async def initialize_profile(self):
+        try:
+            await self.page.goto("https://www.reddit.com", wait_until='networkidle')
+            self.logger.info("Please complete manual login in the browser...")
             
-            logger.info(f"Using account {account['id']}")
-            voter = RedditVoter(account)
+            while "reddit.com/login" in self.page.url:
+                await asyncio.sleep(1)
             
-            if await voter.initialize():
-                if await voter.perform_vote(self.target_url):
-                    success_count += 1
-                    logger.info(f"Progress: {success_count}/{self.target_votes}")
-                    self.account_manager.save_accounts()
+            self.logger.info("Login successful")
+            return True
+        except Exception as e:
+            self.logger.error(f"Login failed: {str(e)}")
+            return False
+
+    async def validate_vote(self):
+        try:
+            upvote_state = await self.page.evaluate('''() => {
+                const btn = document.querySelector('[data-click-id="upvote"]');
+                return btn?.ariaPressed || 'missing';
+            }''')
+
+            validation = asyncio.Future()
+            async def check_response(response):
+                if "/api/vote" in response.url and response.status == 200:
+                    validation.set_result(True)
+            
+            self.page.on("response", check_response)
+            
+            try:
+                await asyncio.wait_for(validation, timeout=10)
+                return upvote_state == "true"
+            except asyncio.TimeoutError:
+                return upvote_state == "true"
                 
-                await asyncio.sleep(random.randint(60, 120))
+        except Exception as e:
+            self.logger.error(f"Validation error: {str(e)}")
+            return False
+
+    async def cleanup(self):
+        if self.browser:
+            await self.browser.close()
+        self.logger.info("Cleanup completed")
+
+async def orchestrate_voting(post_url, total_upvotes):
+    manager = AccountManager()
+    completed = 0
+
+    while completed < total_upvotes:
+        available = manager.get_available_accounts()
+        if not available:
+            next_available = min(
+                (acc['last_used'] + 1800 for acc in manager.accounts),
+                default=None
+            )
+            if next_available:
+                wait_time = max(next_available - time.time(), 0)
+                logger.info(f"Waiting {humanfriendly.format_timespan(wait_time)}")
+                await asyncio.sleep(wait_time + 1)
+                continue
             else:
-                account['status'] = 'error'
-                self.account_manager.save_accounts()
-        
-        logger.info("Voting campaign completed successfully")
+                logger.error("All accounts exhausted")
+                break
+
+        account = available[0]
+        async with RedditStealthSystem(account) as system:
+            success = await system.execute_stealth_vote(post_url)
+            if success:
+                completed += 1
+                manager.save_accounts()
+                logger.info(f"Success: {completed}/{total_upvotes}")
+
+        await asyncio.sleep(1800)
+
+    logger.info(f"Completed {completed} upvotes")
 
 if __name__ == "__main__":
+    logger.info("Starting Reddit Stealth Voting System")
+    
+    post_url = "https://www.reddit.com/r/archlinux/comments/ki9hmm/how_to_properly_removeuninstall_packagesapps_with/"
+    total_upvotes = 5
+    
     try:
-        logger.info("Reddit Voting System Starting")
-        orchestrator = VotingOrchestrator()
-        asyncio.run(orchestrator.run())
-        logger.info("Reddit Voting System Shutting Down")
+        asyncio.run(orchestrate_voting(post_url, total_upvotes))
     except KeyboardInterrupt:
-        logger.warning("Process interrupted by user")
+        logger.info("Shutdown by user")
     except Exception as e:
-        logger.critical(f"Fatal error: {str(e)}", exc_info=True)
+        logger.critical(f"Critical error: {str(e)}")
+    finally:
+        logger.info("System shutdown")
