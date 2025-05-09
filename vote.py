@@ -7,7 +7,6 @@ from dataclasses import asdict, is_dataclass, fields
 from typing import Any, Dict, get_type_hints
 from browserforge.fingerprints import Fingerprint, Screen
 from camoufox.async_api import AsyncCamoufox
-from emunium import EmuniumPlaywright
 from datetime import datetime, timedelta
 
 # Configure logging
@@ -198,7 +197,6 @@ async def upvote_post(account_id: int, post_url: str, proxy_config: Dict[str, An
             try:
                 page = await browser.new_page()
                 logger.info(f"New browser page created for account {account_id}")
-                emunium = EmuniumPlaywright(page)
 
                 await page.context.add_cookies(cookies)
                 logger.debug(f"Cookies added to browser context")
@@ -289,7 +287,7 @@ async def upvote_post(account_id: int, post_url: str, proxy_config: Dict[str, An
         logger.error(f"Upvote process failed for {post_url}: {str(e)}")
         raise
 
-async def orchestrate_upvotes(account_id: int, post_urls: list):
+async def orchestrate_upvotes(account_id: int, post_urls: list, proxy_config: Dict[str, Any] = None):
     logger.info(f"Starting upvote orchestration for account {account_id} on {len(post_urls)} posts")
     try:
         # Calculate time intervals for 24 hours (86400 seconds)
@@ -298,7 +296,7 @@ async def orchestrate_upvotes(account_id: int, post_urls: list):
         max_posts = len(post_urls)
         
         # Generate random times ensuring minimum gap
-        times = []
+        times = [0]
         last_time = 0
         for _ in range(max_posts):
             next_time = last_time + random.uniform(min_gap, total_time / max_posts)
@@ -310,9 +308,16 @@ async def orchestrate_upvotes(account_id: int, post_urls: list):
         logger.debug(f"Scheduled upvote times: {[datetime.now() + timedelta(seconds=t) for t in times]}")
 
         for i, (post_url, delay) in enumerate(zip(post_urls, times)):
-            logger.info(f"Scheduling upvote {i + 1}/{max_posts} for {post_url} after {delay:.2f} seconds")
-            await asyncio.sleep(delay if i == 0 else delay - times[i-1])
+            
+            if i == 0:
+                logger.info(f"Immediately executing upvote 1/{max_posts} for {post_url}")
+            else:
+                wait_time = delay - times[i - 1]
+                logger.info(f"Scheduling upvote {i + 1}/{max_posts} for {post_url} after {wait_time:.2f} seconds")
+                await asyncio.sleep(wait_time)
+
             logger.debug(f"Executing upvote for {post_url}")
+            
             try:
                 await upvote_post(account_id, post_url)
                 logger.info(f"Completed upvote {i + 1}/{max_posts} for {post_url}")
