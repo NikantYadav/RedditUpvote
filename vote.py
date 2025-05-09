@@ -2,23 +2,17 @@ import asyncio
 import json
 import os
 import random
-import time
 import logging
 from dataclasses import asdict, is_dataclass, fields
 from typing import Any, Dict, get_type_hints
 from browserforge.fingerprints import Fingerprint, Screen
 from camoufox.async_api import AsyncCamoufox
-from geoip2 import database
-from geoip2.errors import AddressNotFoundError
-import pytz
-import hashlib
-from dataclasses import fields
 from emunium import EmuniumPlaywright
+from datetime import datetime, timedelta
 
-
-
+# Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Set to DEBUG for detailed logging
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
     handlers=[
         logging.FileHandler('reddit_stealth.log', encoding='utf-8'),
@@ -27,374 +21,325 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
+# Utility to convert dict to dataclass
 def dict_to_dataclass(cls: type, d: Dict[str, Any]) -> Any:
+    logger.debug(f"Converting dict to dataclass: {cls.__name__}")
     if not is_dataclass(cls) or not isinstance(d, dict):
+        logger.warning(f"Invalid input for dataclass conversion: cls={cls}, dict={type(d)}")
         return d
 
-    type_hints = get_type_hints(cls)
-    field_values = {}
-    for field in fields(cls):
-        if field.name in d:
-            field_type = type_hints.get(field.name, Any)
-            field_values[field.name] = dict_to_dataclass(field_type, d[field.name])
-    return cls(**field_values)
+    try:
+        type_hints = get_type_hints(cls)
+        field_values = {}
+        for field in fields(cls):
+            if field.name in d:
+                field_type = type_hints.get(field.name, Any)
+                field_values[field.name] = dict_to_dataclass(field_type, d[field.name])
+        instance = cls(**field_values)
+        logger.debug(f"Successfully created {cls.__name__} instance")
+        return instance
+    except Exception as e:
+        logger.error(f"Failed to convert dict to {cls.__name__}: {str(e)}")
+        raise
+
 
 class HumanBehavior:
     @staticmethod
     async def random_delay(min_ms: int, max_ms: int):
-        logger.info(f"Sleeping randomly between {min_ms} and {max_ms} milliseconds")
-        await asyncio.sleep(random.uniform(min_ms/1000, max_ms/1000))
-
-    @staticmethod
-    # async def human_scroll(page):
-    #     logger.info("Starting human-like scrolling")
-
-    #     # Estimate page height to avoid scrolling beyond content
-    #     page_height = await page.evaluate("document.body.scrollHeight")
-    #     viewport_height = await page.evaluate("window.innerHeight")
-    #     max_scroll = page_height - viewport_height
-    #     current_position = await page.evaluate("window.scrollY")
-    #     logger.info(f"Page height: {page_height}, Viewport height: {viewport_height}, Max scroll: {max_scroll}")
-
-    #     # Define scroll types: small (reading), medium (skimming), large (jumping)
-    #     scroll_types = [
-    #         {"distance": random.randint(100, 300), "speed": random.uniform(0.3, 0.6), "pause": (500, 1500)},  # Small, detailed reading
-    #         {"distance": random.randint(400, 800), "speed": random.uniform(0.5, 1.0), "pause": (300, 1000)},  # Medium, skimming
-    #         {"distance": random.randint(900, 1500), "speed": random.uniform(0.8, 1.5), "pause": (200, 800)},   # Large, jumping
-    #     ]
-
-    #     # Occasionally reverse scroll to mimic revisiting content
-    #     reverse_chance = 0.2
-    #     # Chance to pause longer at "interesting" elements
-    #     content_pause_chance = 0.3
-
-    #     # Perform 3-7 scroll actions to simulate natural browsing
-    #     num_scrolls = random.randint(3, 7)
-    #     for i in range(num_scrolls):
-    #         # Prevent scrolling beyond page bounds
-    #         if current_position >= max_scroll * 0.9:
-    #             logger.info("Near page bottom, reversing or stopping")
-    #             scroll_direction = -1
-    #             scroll = random.choice(scroll_types[:2])  # Use smaller scrolls near bottom
-    #         elif current_position <= 100:
-    #             logger.info("Near page top, scrolling down")
-    #             scroll_direction = 1
-    #             scroll = random.choice(scroll_types)
-    #         else:
-    #             scroll_direction = -1 if random.random() < reverse_chance else 1
-    #             scroll = random.choice(scroll_types)
-
-    #         # Calculate scroll distance
-    #         distance = scroll["distance"] * scroll_direction
-    #         speed = scroll["speed"]
-    #         pause_min, pause_max = scroll["pause"]
-
-    #         # Smooth scrolling with multiple small steps
-    #         steps = random.randint(3, 6)  # Break scroll into smaller steps for smoothness
-    #         step_distance = distance / steps
-    #         for _ in range(steps):
-    #             await page.mouse.wheel(delta_x=0, delta_y=step_distance)
-    #             await asyncio.sleep(speed / steps)  # Spread out the scroll duration
-
-    #         current_position += distance
-    #         current_position = max(0, min(current_position, max_scroll))  # Clamp to valid range
-    #         logger.info(f"Scrolled {distance} pixels, new position: {current_position}")
-
-    #         # Simulate pausing at interesting content (e.g., posts, images)
-    #         if random.random() < content_pause_chance:
-    #             logger.info("Pausing at potentially interesting content")
-    #             # Query for elements like posts or images to simulate attention
-    #             elements = await page.query_selector_all('article, img, h1, h2, h3')
-    #             if elements:
-    #                 element = random.choice(elements)
-    #                 await page.evaluate("(element) => element.scrollIntoView({ behavior: 'smooth', block: 'center' })", element)
-    #                 await HumanBehavior.random_delay(1000, 3000)  # Longer pause for "reading"
-    #             else:
-    #                 await HumanBehavior.random_delay(pause_min, pause_max)
-    #         else:
-    #             await HumanBehavior.random_delay(pause_min, pause_max)
-
-    #     logger.info("Finished human-like scrolling")
+        try:
+            delay = random.uniform(min_ms/1000, max_ms/1000)
+            logger.debug(f"Applying random delay of {delay:.2f} seconds")
+            await asyncio.sleep(delay)
+        except Exception as e:
+            logger.error(f"Error in random_delay: {str(e)}")
+            raise
 
     @staticmethod
     async def human_scroll(page):
-        """Perform human-like scrolling using Lenis smooth scroll library."""
-        logger.info("Starting human-like scrolling with Lenis")
+        logger.info("Starting human-like scrolling")
+        try:
+            async def randomized_pause(base_duration):
+                variance = random.choice([(1.0, 1.2), (0.8, 1.0), (0.5, 0.8), (1.5, 3.0)])
+                pause = base_duration * random.uniform(*variance)
+                logger.debug(f"Randomized pause for {pause:.2f} seconds")
+                await asyncio.sleep(pause)
 
-        # Load Lenis from CDN
-        await page.add_script_tag(url="https://cdn.jsdelivr.net/npm/lenis@1/dist/lenis.min.js")
+            page_height = await page.evaluate("document.body.scrollHeight")
+            viewport_height = await page.evaluate("window.innerHeight")
+            max_scroll = page_height - viewport_height
+            current_position = await page.evaluate("window.scrollY")
+            logger.debug(f"Page height: {page_height}, Viewport height: {viewport_height}, Max scroll: {max_scroll}")
 
-        # Initialize Lenis with natural scrolling settings
-        await page.evaluate("""
-            const lenis = new Lenis({
-                duration: 1.2,  // Duration in seconds for smooth scroll
-                easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),  // Ease-out curve
-                smooth: true,   // Enable smooth scrolling
-                direction: 'vertical',
-                infinite: false,
-            });
+            scroll_types = [
+                {"distance_min": 20, "distance_max": 150, "speed_min": 0.1, "speed_max": 0.3, "pause_min": 300, "pause_max": 700, "horizontal_jitter": (0, 8), "reversal_chance": 0.25, "accuracy_deviation": 5, "step_variability": (3, 6), "tremor_factor": 2, "finger_slip_chance": 0.02},
+                {"distance_min": 80, "distance_max": 350, "speed_min": 0.25, "speed_max": 0.65, "pause_min": 800, "pause_max": 3000, "horizontal_jitter": (0, 15), "reversal_chance": 0.15, "accuracy_deviation": 10, "step_variability": (2, 5), "curve_type": "ease-out", "finger_slip_chance": 0.05},
+                {"distance_min": 300, "distance_max": 900, "speed_min": 0.4, "speed_max": 1.2, "pause_min": 400, "pause_max": 1500, "horizontal_jitter": (0, 25), "reversal_chance": 0.08, "accuracy_deviation": 25, "step_variability": (3, 8), "overshoot_factor": (1.1, 1.3), "finger_slip_chance": 0.1},
+                {"distance_min": 800, "distance_max": 2200, "speed_min": 0.7, "speed_max": 2.0, "pause_min": 200, "pause_max": 800, "horizontal_jitter": (0, 30), "reversal_chance": 0.03, "accuracy_deviation": 50, "step_variability": (4, 10), "momentum_scroll": True, "swing_variance": (0.8, 1.2)}
+            ]
 
-            // Animation loop for Lenis
-            function raf(time) {
-                lenis.raf(time);
-                requestAnimationFrame(raf);
-            }
-            requestAnimationFrame(raf);
-        """)
+            content_pause_chance = 0.4
+            momentum_chance = 0.3
+            max_scroll_attempts = random.randint(1, 4)
 
-        # Get page scroll dimensions
-        page_height = await page.evaluate("document.body.scrollHeight")
-        viewport_height = await page.evaluate("window.innerHeight")
-        max_scroll = page_height - viewport_height
-        current_position = await page.evaluate("window.scrollY")
-        logger.info(f"Page height: {page_height}, Viewport height: {viewport_height}, Max scroll: {max_scroll}")
+            for attempt in range(max_scroll_attempts):
+                current_position = await page.evaluate("window.scrollY")
+                if max_scroll <= 0:
+                    logger.debug("Max scroll reached, stopping")
+                    break
 
-        # Define scroll profiles for variety
-        scroll_profiles = [
-            {"name": "slow_read", "distance": (100, 300), "duration": (1.5, 2.5), "pause_chance": 0.6},
-            {"name": "quick_skim", "distance": (400, 800), "duration": (0.8, 1.5), "pause_chance": 0.3},
-        ]
-        profile = random.choice(scroll_profiles)
-        logger.info(f"Using scroll profile: {profile['name']}")
+                position_ratio = current_position / max_scroll
+                scroll_direction = 1 if position_ratio <= 0.1 else (-1 if position_ratio >= 0.9 else (-1 if random.random() < (0.15 + 0.25 * position_ratio) else 1))
+                type_weights = [0.2 + (0.3 * (1 - position_ratio)), 0.3 + (0.4 * position_ratio), 0.25 - (0.1 * position_ratio), 0.1 * position_ratio]
+                scroll_type = random.choices(scroll_types, weights=type_weights, k=1)[0]
 
-        # Perform random number of scrolls
-        for _ in range(random.randint(3, 6)):
-            # Decide scroll direction
-            scroll_direction = 1 if current_position < max_scroll * 0.9 else -1
-            distance = random.randint(*profile["distance"]) * scroll_direction
-            duration = random.uniform(*profile["duration"])
+                base_distance = random.randint(scroll_type["distance_min"], scroll_type["distance_max"])
+                accuracy_dev = random.randint(-scroll_type["accuracy_deviation"], scroll_type["accuracy_deviation"])
+                actual_distance = (base_distance + accuracy_dev) * scroll_direction
 
-            # Scroll with Lenis
-            target_position = max(0, min(current_position + distance, max_scroll))
-            await page.evaluate(f"""
-                lenis.scrollTo({target_position}, {{
-                    duration: {duration},
-                    easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t))
-                }});
-            """)
-            await asyncio.sleep(duration + 0.2)  # Wait for scroll to finish
-            current_position = target_position
-            logger.info(f"Scrolled to: {current_position}")
+                if random.random() < scroll_type.get("finger_slip_chance", 0):
+                    slip_factor = random.uniform(1.5, 3.0)
+                    actual_distance *= slip_factor
+                    logger.debug(f"Finger slip applied, distance multiplier: {slip_factor}")
 
-            # Pause at content with Lenis
-            if random.random() < profile["pause_chance"]:
-                elements = await page.query_selector_all('article, img, video, h1, h2')
-                if elements:
-                    element = random.choice(elements)
-                    element_type = await element.evaluate("el => el.tagName.toLowerCase()")
-                    logger.info(f"Pausing at: {element_type}")
-                    await page.evaluate("""
-                        const el = arguments[0];
-                        lenis.scrollTo(el.getBoundingClientRect().top + window.scrollY, {
-                            duration: 1.0
-                        });
-                    """, element)
-                    pause_ms = 2000 if element_type in ["img", "video"] else 1000
-                    await HumanBehavior.random_delay(pause_ms, pause_ms + 1000)
-                else:
-                    await HumanBehavior.random_delay(500, 1500)
-            else:
-                await HumanBehavior.random_delay(500, 1500)
+                h_jitter = random.randint(*scroll_type["horizontal_jitter"]) * random.choice([-1, 1])
+                steps = random.randint(*scroll_type["step_variability"])
+                step_distance = actual_distance / steps
+                h_step = h_jitter / steps
 
-        logger.info("Completed human-like scrolling")
-        
-    @staticmethod
-    async def random_mouse_movement(emunium, page):
-        # Select elements like links, buttons, or images from the page
-        elements = await page.query_selector_all('a, button, img')  # You can adjust this selector
-        if not elements:
-            logger.warning("No elements found for mouse movement")
-            return
+                for step in range(steps):
+                    speed = random.uniform(scroll_type["speed_min"], scroll_type["speed_max"]) * random.uniform(*scroll_type.get("swing_variance", (1, 1)))
+                    tremor_x = random.randint(-scroll_type.get("tremor_factor", 0), scroll_type.get("tremor_factor", 0))
+                    tremor_y = random.randint(-scroll_type.get("tremor_factor", 0), scroll_type.get("tremor_factor", 0))
+                    await page.mouse.wheel(delta_x=h_step + tremor_x, delta_y=step_distance + tremor_y)
+                    await asyncio.sleep(speed / steps)
 
-        # Pick 2-3 random elements
-        num_elements = 1 # Choose between 2 or 3 elements
-        selected_elements = random.sample(elements, num_elements)
+                if scroll_type.get("momentum_scroll") and random.random() < momentum_chance:
+                    momentum_distance = actual_distance * 0.3 * random.uniform(0.5, 1.5)
+                    await page.mouse.wheel(delta_x=0, delta_y=momentum_distance)
+                    await asyncio.sleep(random.uniform(0.1, 0.3))
 
-        # Move the mouse to each element randomly
-        for element in selected_elements:
-            logger.info(f"Moving mouse to element: {await element.evaluate('el => el.outerHTML')}")
-            await emunium.scroll_to(element)
-            await emunium.move_to(element)  # Move to the element with human-like movement
-            await HumanBehavior.random_delay(500, 1000)  # Add a small random delay (assuming this method exists)
+                if "overshoot_factor" in scroll_type:
+                    correction = -int(actual_distance * random.uniform(*scroll_type["overshoot_factor"]))
+                    await page.mouse.wheel(delta_x=0, delta_y=correction)
+                    await asyncio.sleep(0.1)
 
-        logger.info("Finished random mouse movement")
+                current_position = max(0, min(current_position + actual_distance, max_scroll))
+                logger.debug(f"Scroll attempt {attempt + 1}, new position: {current_position}")
 
+                base_pause = random.uniform(scroll_type["pause_min"], scroll_type["pause_max"]) / 1000
+                await randomized_pause(base_pause)
 
-    @staticmethod
-    async def human_click(emunium, element):
-        logger.info("Starting Human Like Click")
-        await emunium.click_at(element)
-        logger.info("Finished human-like click")
+                if random.random() < 0.15:
+                    logger.debug("Random scroll pattern break")
+                    break
 
+            logger.info("Completed human-like scrolling")
+        except Exception as e:
+            logger.error(f"Error in human_scroll: {str(e)}")
+            raise
 
 class StealthEnhancer:
     def __init__(self, account_id):
         self.account_id = account_id
         self.profiles_dir = "profiles"
+        logger.debug(f"Initializing StealthEnhancer for account {account_id}")
         self.fingerprint = self.load_fingerprint()
 
-
-
     def load_fingerprint(self):
-        # Construct the file path
-        fingerprint_file = os.path.join(
-            self.profiles_dir, str(self.account_id),
-            f"fingerprint_{self.account_id}.json"
-        )
-        print(f"Loading fingerprint from {fingerprint_file}")
-        
-        # Load the JSON file
-        with open(fingerprint_file, "r") as f:
-            data = json.load(f)
-        
+        fingerprint_file = os.path.join(self.profiles_dir, str(self.account_id), f"fingerprint_{self.account_id}.json")
+        logger.debug(f"Loading fingerprint from {fingerprint_file}")
+
         try:
+            if not os.path.exists(fingerprint_file):
+                logger.error(f"Fingerprint file not found: {fingerprint_file}")
+                raise FileNotFoundError(f"Fingerprint file not found: {fingerprint_file}")
+
+            with open(fingerprint_file, "r") as f:
+                data = json.load(f)
+            logger.debug(f"Fingerprint data loaded: {data}")
+
             fingerprint = dict_to_dataclass(Fingerprint, data["fingerprint"])
-            print("Successfully created Fingerprint instance")
+            logger.info(f"Successfully loaded fingerprint for account {self.account_id}")
             return fingerprint
-        except TypeError as e:
-            print(f"Error creating Fingerprint instance: {e}")
+        except Exception as e:
+            logger.error(f"Failed to load fingerprint: {str(e)}")
             raise
+
 
 async def upvote_post(account_id: int, post_url: str, proxy_config: Dict[str, Any] = None):
-    stealth = StealthEnhancer(account_id)
-    profiles_dir = "profiles"
-    
-    cookies_file = os.path.join(profiles_dir, str(account_id), f"cookies_{account_id}.json")
-    logger.info(f"Loading cookies from {cookies_file}")
-    with open(cookies_file, "r") as f:
-        cookies = json.load(f)
-    logger.info("Cookies Loaded successfully!")
-    print("Configuring")
-    config = {
-        "fingerprint": stealth.fingerprint,
-        "os": "windows",
-        "screen": Screen(max_width=1280, max_height=720),
-        "geoip": True,
-        "humanize": True,
-        "i_know_what_im_doing": True
-    }
-    print("Configured")
-    if proxy_config:
-        config["proxy"] = proxy_config
-        logger.info(f"Using proxy configuration: {proxy_config}")
+    logger.info(f"Starting upvote process for account {account_id} on post {post_url}")
+    try:
+        stealth = StealthEnhancer(account_id)
+        cookies_file = os.path.join("profiles", str(account_id), f"cookies_{account_id}.json")
+        logger.debug(f"Loading cookies from {cookies_file}")
 
-    async with AsyncCamoufox(**config) as browser:
         try:
-            page = await browser.new_page()
-            emunium = EmuniumPlaywright(page)
+            with open(cookies_file, "r") as f:
+                cookies = json.load(f)
+            logger.info(f"Cookies loaded successfully for account {account_id}")
+        except Exception as e:
+            logger.error(f"Failed to load cookies: {str(e)}")
+            raise
 
-            await page.context.add_cookies(cookies)
-            logger.info(f"Added cookies for account {account_id}")
+        config = {
+            "fingerprint": stealth.fingerprint,
+            "os": "windows",
+            "screen": Screen(max_width=1280, max_height=720),
+            "geoip": True,
+            "humanize": True,
+            "i_know_what_im_doing": True
+        }
+        if proxy_config:
+            config["proxy"] = proxy_config
+            logger.debug(f"Using proxy configuration: {proxy_config}")
 
-            await page.set_extra_http_headers({
-                'Referer': random.choice([
-                    'https://www.google.com/',
-                    'https://x.com/',
-                    'https://www.reddit.com/'
-                ])
-            })
+        logger.debug(f"Browser configuration: {config}")
+        async with AsyncCamoufox(**config) as browser:
+            try:
+                page = await browser.new_page()
+                logger.info(f"New browser page created for account {account_id}")
+                emunium = EmuniumPlaywright(page)
 
-            await HumanBehavior.random_delay(1000, 3000)
-            logger.info(f"Navigating to Reddit homepage for account {account_id}")
-            await page.goto('https://www.reddit.com/', wait_until='domcontentloaded')
-            await HumanBehavior.human_scroll(page)
-            await HumanBehavior.random_delay(2000, 5000)
-            
-            logger.info(f"Navigating to post URL: {post_url} for account {account_id}")
-            await page.goto(post_url)
-            await HumanBehavior.random_delay(4000,8000)
-            # num_scrolls = random.randint(3, 6)
-            # for _ in range(num_scrolls):
-            #     await HumanBehavior.human_scroll(page)
-            #     await HumanBehavior.random_delay(500, 3000)
-            
-            
-            upvote_selector = 'button:has(svg[icon-name="upvote-outline"])'
-            print(upvote_selector)
-            
-            #await HumanBehavior.random_mouse_movement(emunium,page)
-            print("finding button")
-            button = await page.wait_for_selector(upvote_selector, timeout=15000)
-            
-            if button is None:
-                logger.error("Could not find upvote button")
-                raise RuntimeError("Could not find upvote button")
-            else:
-                await emunium.scroll_to(button)
-                #await emunium.move_to(button)
-                logger.info("Found upvote button")
-                print(button)
+                await page.context.add_cookies(cookies)
+                logger.debug(f"Cookies added to browser context")
 
-            aria_pressed = await button.get_attribute('aria-pressed')
-  
-            if aria_pressed == "false":
-                print("Post is not upvoted. Upvoting now...")
-                # await HumanBehavior.human_click(emunium, button)
-                await button.click()
+                await page.set_extra_http_headers({
+                    'Referer': random.choice(['https://www.google.com/', 'https://x.com/', 'https://www.reddit.com/'])
+                })
+                logger.debug("Extra HTTP headers set")
+
+                await HumanBehavior.random_delay(1000, 3000)
+                logger.info(f"Navigating to Reddit homepage")
+                await page.goto('https://www.reddit.com/', wait_until='domcontentloaded')
+                logger.debug("Reddit homepage loaded")
+                await HumanBehavior.random_delay(500, 1000)
+                await HumanBehavior.human_scroll(page)
                 await HumanBehavior.random_delay(2000, 5000)
 
-                upvote_selector2 = 'button:has(svg[icon-name="upvote-fill"])'
-                button2 = await page.wait_for_selector(upvote_selector2, timeout=15000)
-                aria_pressed2 = await button2.get_attribute('aria-pressed')
+                logger.info(f"Navigating to post URL: {post_url}")
+                await page.goto(post_url)
+                logger.debug(f"Post page loaded: {post_url}")
+                await HumanBehavior.random_delay(8000, 20000)
 
-                if aria_pressed2 == "true":
-                    logger.info(f"Successfully upvoted post with account {account_id}")
+                upvote_selector = 'button:has(svg[icon-name="upvote-outline"])'
+                voted_selector = 'button:has(svg[icon-name="upvote-fill"])'
+                logger.debug(f"Querying for upvote button with selector: {upvote_selector}")
+
+                button = await page.query_selector(upvote_selector)
+                if button is None:
+                    logger.warning("Upvote button not found, checking if already upvoted")
+                    voted_button = await page.wait_for_selector(voted_selector, timeout=15000)
+                    if voted_button:
+                        logger.info(f"Post already upvoted: {post_url}")
+                        await HumanBehavior.random_delay(2000, 3500)
+                        return
+                    else:
+                        logger.error(f"Neither upvote nor voted button found for {post_url}")
+                        raise Exception("Upvote button not found")
+
+                logger.debug("Upvote button found")
+                aria_pressed = await button.get_attribute('aria-pressed')
+                logger.debug(f"Upvote button aria-pressed: {aria_pressed}")
+
+                if aria_pressed == "false":
+                    logger.info(f"Post not upvoted, performing upvote: {post_url}")
+                    await button.click()
+                    logger.debug("Upvote button clicked")
+                    await HumanBehavior.random_delay(2000, 5000)
+
+                    button2 = await page.wait_for_selector(voted_selector, timeout=15000)
+                    if button2:
+                        aria_pressed2 = await button2.get_attribute('aria-pressed')
+                        if aria_pressed2 == "true":
+                            logger.info(f"Successfully upvoted post: {post_url}")
+                        else:
+                            logger.error(f"Upvote validation failed, aria-pressed: {aria_pressed2}")
+                            raise Exception("Upvote validation failed")
+                    else:
+                        logger.error("Failed to find upvoted button after click")
+                        raise Exception("Upvoted button not found")
                 else:
-                    logger.warning("Upvote validation failed")
-            else:
-                print("Post is already upvoted.")
-            
-            #await HumanBehavior.random_mouse_movement(emunium, page)
-            await asyncio.sleep(random.uniform(2, 5))
-            
-            random_pages = [
-                'https://www.reddit.com/',
-                'https://www.reddit.com/r/popular/',
-                'https://www.reddit.com/r/AskReddit/',
-                'https://www.reddit.com/r/funny/',
-                'https://www.reddit.com/r/science/'
-            ]
-            random_page = random.choice(random_pages)
-            logger.info(f"Navigating to random page {random_page} after upvote")
-            await page.goto(random_page)
-            await HumanBehavior.random_delay(1000,5000)
-        except Exception as e:
-            logger.error(f"Error during upvote process: {str(e)}")
-            raise
-        finally:
-            print("Closing")
-            await page.close()
+                    logger.info(f"Post already upvoted: {post_url}")
 
-async def orchestrate_upvotes(post_url: str, account_ids: list, proxies: dict[str, Any] = None):
-    proxies = proxies or {} 
-    tasks = []
-    for account_id in account_ids:
-        task = asyncio.create_task(
-            upvote_post(account_id, post_url),
-            name=f"Account_{account_id}"
-        )
-        tasks.append(task)
-        logger.info(f"Scheduled upvote task for account {account_id}")
-        await asyncio.sleep(random.randint(300, 900))
-    
-    logger.info("Awaiting completion of all upvote tasks")
-    await asyncio.gather(*tasks, return_exceptions=True)
+                await HumanBehavior.random_delay(2000, 5000)
+                random_pages = [
+                    'https://www.reddit.com/', 'https://www.reddit.com/r/popular/', 'https://www.reddit.com/r/all/',
+                    'https://www.reddit.com/r/AskReddit/', 'https://www.reddit.com/r/funny/', 'https://www.reddit.com/r/science/',
+                    'https://www.reddit.com/r/technology/', 'https://www.reddit.com/r/worldnews/', 'https://www.reddit.com/r/movies/',
+                    'https://www.reddit.com/r/gaming/', 'https://www.reddit.com/r/todayilearned/', 'https://www.reddit.com/r/pics/',
+                    'https://www.reddit.com/r/aww/', 'https://www.reddit.com/r/Showerthoughts/', 'https://www.reddit.com/r/interestingasfuck/',
+                    'https://www.reddit.com/r/AskScience/', 'https://www.reddit.com/r/MadeMeSmile/', 'https://www.reddit.com/r/mildlyinteresting/',
+                    'https://www.reddit.com/r/dataisbeautiful/', 'https://www.reddit.com/r/InternetIsBeautiful/', 'https://www.reddit.com/r/HistoryPorn/',
+                    'https://www.reddit.com/r/wholesomememes/', 'https://www.reddit.com/r/NoStupidQuestions/', 'https://www.reddit.com/r/TrueOffMyChest/',
+                    'https://www.reddit.com/r/lifeprotips/', 'https://www.reddit.com/r/explainlikeimfive/', 'https://www.reddit.com/r/nottheonion/',
+                    'https://www.reddit.com/r/DIY/', 'https://www.reddit.com/r/EarthPorn/', 'https://www.reddit.com/r/space/'
+                ]
+                random_page = random.choice(random_pages)
+                logger.info(f"Navigating to random page: {random_page}")
+                await page.goto(random_page)
+                await HumanBehavior.random_delay(1000, 5000)
+            except Exception as e:
+                logger.error(f"Error during browser operations for {post_url}: {str(e)}")
+                raise
+            finally:
+                if 'page' in locals():
+                    logger.debug("Closing page")
+                    await page.close()
+    except Exception as e:
+        logger.error(f"Upvote process failed for {post_url}: {str(e)}")
+        raise
+
+async def orchestrate_upvotes(account_id: int, post_urls: list):
+    logger.info(f"Starting upvote orchestration for account {account_id} on {len(post_urls)} posts")
+    try:
+        # Calculate time intervals for 24 hours (86400 seconds)
+        total_time = 86400  # 24 hours in seconds
+        min_gap = 1800  # 30 minutes in seconds
+        max_posts = len(post_urls)
+        
+        # Generate random times ensuring minimum gap
+        times = []
+        last_time = 0
+        for _ in range(max_posts):
+            next_time = last_time + random.uniform(min_gap, total_time / max_posts)
+            if next_time > total_time:
+                break
+            times.append(next_time)
+            last_time = next_time
+        times.sort()
+        logger.debug(f"Scheduled upvote times: {[datetime.now() + timedelta(seconds=t) for t in times]}")
+
+        for i, (post_url, delay) in enumerate(zip(post_urls, times)):
+            logger.info(f"Scheduling upvote {i + 1}/{max_posts} for {post_url} after {delay:.2f} seconds")
+            await asyncio.sleep(delay if i == 0 else delay - times[i-1])
+            logger.debug(f"Executing upvote for {post_url}")
+            try:
+                await upvote_post(account_id, post_url)
+                logger.info(f"Completed upvote {i + 1}/{max_posts} for {post_url}")
+            except Exception as e:
+                logger.error(f"Failed upvote {i + 1}/{max_posts} for {post_url}: {str(e)}")
+                continue  # Continue with next post despite error
+    except Exception as e:
+        logger.error(f"Orchestration failed: {str(e)}")
+        raise
 
 if __name__ == "__main__":
-    target_url = "https://www.reddit.com/r/AppearanceAdvice/comments/1ki1ooo/what_do_you_think_of_my_face/"
-    account_ids = [1]
-    # proxies = {
-    #     1: 'http://proxy1.example.com:8080',
-    #     2: 'http://proxy2.example.com:8080',
-    #     3: 'http://proxy3.example.com:8080',
-    #     4: 'http://proxy4.example.com:8080',
-    #     5: 'http://proxy5.example.com:8080'
-    # }
+    account_id = 1
+    post_urls = [
+        "https://www.reddit.com/r/AskReddit/comments/1ki36is/a_newly_elected_pope_can_technically_choose_any/",
+        "https://www.reddit.com/r/indiafitchecks/comments/1kef91u/soft_boy_summer_starter_packdoes_this_work/",
+        "https://www.reddit.com/r/SanjeedaSheikh/comments/1kf34w1/can_anyone_feed/",
+        "https://www.reddit.com/r/AppearanceAdvice/comments/1khryvh/18_f_makeup_or_no_makeup/",
+        "https://www.reddit.com/r/NameMyDog/comments/1khp56l/need_out_of_pocketfood_names/"
+    ]
     
     try:
-        asyncio.run(orchestrate_upvotes(target_url, account_ids))
+        logger.info("Starting upvoting session")
+        asyncio.run(orchestrate_upvotes(account_id, post_urls))
+        logger.info("Upvoting session completed successfully")
     except KeyboardInterrupt:
         logger.info("Process interrupted by user")
+    except Exception as e:
+        logger.error(f"Upvoting session failed: {str(e)}")
     finally:
-        logger.info("Upvoting session completed")
+        logger.info("Program execution ended")
