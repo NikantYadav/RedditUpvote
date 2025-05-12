@@ -19,12 +19,67 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+from typing import get_origin, get_args, Union
 
-# Utility to convert dict to dataclass
-def dict_to_dataclass(cls: type, d: Dict[str, Any]) -> Any:
+def dict_to_dataclass(cls: type, d: Any) -> Any:
     logger.debug(f"Converting dict to dataclass: {cls.__name__}")
-    if not is_dataclass(cls) or not isinstance(d, dict):
-        logger.warning(f"Invalid input for dataclass conversion: cls={cls}, dict={type(d)}")
+
+    if cls is bool:
+        if isinstance(d, bool):
+            return d
+        elif isinstance(d, str):
+            normalized = d.strip().lower()
+            if normalized == 'true':
+                return True
+            elif normalized == 'false':
+                return False
+            else:
+                raise ValueError(f"Invalid boolean string: {d}")
+        elif d is None:
+            return False  # Treat None (null) as False
+        else:
+            raise ValueError(f"Expected bool, got {type(d)}")
+    # Handle generic containers and Optional types first
+    origin = get_origin(cls)
+    if origin:
+        # Handle Optional/Union types
+        if origin is Union:
+            type_args = [a for a in get_args(cls) if a is not type(None)]
+            if type_args:
+                return dict_to_dataclass(type_args[0], d)
+        
+        # Handle List/Dict/Set
+        if origin in (list, dict, set):
+            container_type = origin
+            type_args = get_args(cls)
+            
+            if container_type is list and isinstance(d, list):
+                return [dict_to_dataclass(type_args[0], item) for item in d]
+            elif container_type is dict and isinstance(d, dict):
+                key_type, value_type = type_args
+                return {dict_to_dataclass(key_type, k): dict_to_dataclass(value_type, v) for k, v in d.items()}
+            elif container_type is set and isinstance(d, (list, set)):
+                return {dict_to_dataclass(type_args[0], item) for item in d}
+            
+            return d  # Return as-is if type doesn't match
+
+    # Handle non-generic types
+    if not is_dataclass(cls):
+        try:
+            # Direct assignment for primitive types
+            if isinstance(d, cls):
+                return d
+            # Convert primitive types
+            return cls(d) if d is not None else None
+        except TypeError:
+            return d
+        except Exception as e:
+            logger.error(f"Conversion error for {cls}: {str(e)}")
+            raise
+
+    # Handle dataclass conversion
+    if not isinstance(d, dict):
+        logger.warning(f"Expected dict for {cls.__name__}, got {type(d)}")
         return d
 
     try:
@@ -32,15 +87,13 @@ def dict_to_dataclass(cls: type, d: Dict[str, Any]) -> Any:
         field_values = {}
         for field in fields(cls):
             if field.name in d:
-                field_type = type_hints.get(field.name, Any)
-                field_values[field.name] = dict_to_dataclass(field_type, d[field.name])
-        instance = cls(**field_values)
-        logger.debug(f"Successfully created {cls.__name__} instance")
-        return instance
+                field_type = type_hints[field.name]
+                field_value = d[field.name]
+                field_values[field.name] = dict_to_dataclass(field_type, field_value)
+        return cls(**field_values)
     except Exception as e:
         logger.error(f"Failed to convert dict to {cls.__name__}: {str(e)}")
         raise
-
 
 class HumanBehavior:
     @staticmethod
@@ -156,7 +209,7 @@ class StealthEnhancer:
             with open(fingerprint_file, "r") as f:
                 data = json.load(f)
             logger.debug(f"Fingerprint data loaded: {data}")
-
+            
             fingerprint = dict_to_dataclass(Fingerprint, data["fingerprint"])
             logger.info(f"Successfully loaded fingerprint for account {self.account_id}")
             return fingerprint
@@ -193,6 +246,7 @@ async def upvote_post(account_id: int, post_url: str, proxy_config: Dict[str, An
             logger.debug(f"Using proxy configuration: {proxy_config}")
 
         logger.debug(f"Browser configuration: {config}")
+        # async with AsyncCamoufox(headless="virtual",**config) as browser:
         async with AsyncCamoufox(**config) as browser:
             try:
                 page = await browser.new_page()
@@ -224,9 +278,10 @@ async def upvote_post(account_id: int, post_url: str, proxy_config: Dict[str, An
                 logger.debug(f"Querying for upvote button with selector: {upvote_selector}")
 
                 button = await page.query_selector(upvote_selector)
+                logger.info(button)
                 if button is None:
                     logger.warning("Upvote button not found, checking if already upvoted")
-                    voted_button = await page.wait_for_selector(voted_selector, timeout=15000)
+                    voted_button = await page.query_selector(voted_selector)
                     if voted_button:
                         logger.info(f"Post already upvoted: {post_url}")
                         await HumanBehavior.random_delay(2000, 3500)
@@ -329,18 +384,20 @@ async def orchestrate_upvotes(account_id: int, post_urls: list, proxy_config: Di
         raise
 
 if __name__ == "__main__":
-    account_id = 1
+    account_id = 6
     post_urls = [
-        "https://www.reddit.com/r/AskReddit/comments/1ki36is/a_newly_elected_pope_can_technically_choose_any/",
-        "https://www.reddit.com/r/indiafitchecks/comments/1kef91u/soft_boy_summer_starter_packdoes_this_work/",
-        "https://www.reddit.com/r/SanjeedaSheikh/comments/1kf34w1/can_anyone_feed/",
-        "https://www.reddit.com/r/AppearanceAdvice/comments/1khryvh/18_f_makeup_or_no_makeup/",
-        "https://www.reddit.com/r/NameMyDog/comments/1khp56l/need_out_of_pocketfood_names/"
+        "https://www.reddit.com/r/AskReddit/comments/1kkz0zm/if_you_could_switch_lives_with_any_fictional/",
     ]
+
+    proxy_config = {
+        "server": "http://82.23.88.209:7965",  # Replace with actual proxy server
+        "username": "pstvdsop",                   # Replace with actual username
+        "password": "vic5dg5kklfd"   
+    }
     
     try:
         logger.info("Starting upvoting session")
-        asyncio.run(orchestrate_upvotes(account_id, post_urls))
+        asyncio.run(orchestrate_upvotes(account_id, post_urls, proxy_config))
         logger.info("Upvoting session completed successfully")
     except KeyboardInterrupt:
         logger.info("Process interrupted by user")

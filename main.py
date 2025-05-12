@@ -19,7 +19,10 @@ os.makedirs(desired_folder, exist_ok=True)
 
 # Helper function to recursively convert a dictionary to a dataclass
 
-def dict_to_dataclass(cls: type, d: Dict[str, Any]) -> Any:
+from dataclasses import is_dataclass, fields
+from typing import get_type_hints, Any, Dict, Type
+
+def dict_to_dataclass(cls: Type, d: Dict[str, Any]) -> Any:
     if not is_dataclass(cls) or not isinstance(d, dict):
         return d
 
@@ -27,8 +30,28 @@ def dict_to_dataclass(cls: type, d: Dict[str, Any]) -> Any:
     field_values = {}
     for field in fields(cls):
         if field.name in d:
+            value = d[field.name]
             field_type = type_hints.get(field.name, Any)
-            field_values[field.name] = dict_to_dataclass(field_type, d[field.name])
+            if field_type == bool:
+                # Handle string representations of booleans
+                if isinstance(value, str):
+                    if value.lower() in ('true', '1', 'yes'):
+                        field_values[field.name] = True
+                    elif value.lower() in ('false', '0', 'no'):
+                        field_values[field.name] = False
+                    else:
+                        raise ValueError(f"Invalid boolean value for {field.name}: {value}")
+                # Handle null (None) values
+                elif value is None:
+                    field_values[field.name] = False  # Default to False for null
+                # If already a boolean, use it as is
+                elif isinstance(value, bool):
+                    field_values[field.name] = value
+                else:
+                    raise ValueError(f"Unexpected value for boolean field {field.name}: {value}")
+            else:
+                # Recursively handle other types
+                field_values[field.name] = dict_to_dataclass(field_type, value)
     return cls(**field_values)
 
 async def save_all_cookies(context, profile_num,filename=None):
@@ -117,6 +140,33 @@ async def run(account_id: int, proxy_config: Dict[str, Any] = None):
                         )
                         if inp.strip().lower() == 'exit':
                             print("\nSaving cookies and closing browser...")
+
+
+                            reddit_username = await asyncio.get_event_loop().run_in_executor(
+                                None, input, "Enter your Reddit username: "
+                            )
+
+                            accounts_file = os.path.join(desired_folder, "accounts.json")
+
+                            if os.path.exists(accounts_file):
+                                with open(accounts_file, "r") as f:
+                                    accounts_data = json.load(f)
+                            else:
+                                accounts_data = {}
+                            
+                            proxy_info = proxy_config if proxy_config else {}
+
+                            accounts_data[str(account_id)] = {
+                                "account_id": account_id,
+                                "reddit_username": reddit_username,
+                                "proxy": proxy_info
+                            }
+
+                            with open(accounts_file, "w") as f:
+                                json.dump(accounts_data, f, indent=2)
+
+                            print(f"✅ Updated accounts.json for account {account_id}")
+
                             manual_completion_event.set()
                             break
                 asyncio.create_task(wait_for_input())
@@ -131,12 +181,12 @@ async def run(account_id: int, proxy_config: Dict[str, Any] = None):
 
 
 def main():
-    account_id = 1 # Example account ID
+    account_id = 8 # Example account ID
     proxy_config = {
-        "server": "http://82.23.91.244:8003",  # Replace with actual proxy server
+        "server": "http://82.23.62.96:7849",  # Replace with actual proxy server
         "username": "pstvdsop",                   # Replace with actual username
         "password": "vic5dg5kklfd"                    # Replace with actual password
-    }  # Replace with actual proxy details
+    }  
     asyncio.run(run(account_id, proxy_config))
 
 if __name__ == "__main__":
