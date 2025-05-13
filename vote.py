@@ -29,16 +29,20 @@ def dict_to_dataclass(cls: type, d: Any) -> Any:
             return d
         elif isinstance(d, str):
             normalized = d.strip().lower()
+            logger.debug(f"Normalized string value: '{normalized}'")
             if normalized == 'true':
                 return True
             elif normalized == 'false':
                 return False
             else:
+                logger.error(f"Invalid boolean string: '{d}'")
                 raise ValueError(f"Invalid boolean string: {d}")
         elif d is None:
+            logger.debug("Treating None as False")
             return False  # Treat None (null) as False
         else:
-            raise ValueError(f"Expected bool, got {type(d)}")
+            logger.error(f"Unexpected boolean type: {type(d)}")
+            raise ValueError(f"Unexpected bool, got {type(d)}")
     # Handle generic containers and Optional types first
     origin = get_origin(cls)
     if origin:
@@ -89,6 +93,14 @@ def dict_to_dataclass(cls: type, d: Any) -> Any:
             if field.name in d:
                 field_type = type_hints[field.name]
                 field_value = d[field.name]
+                if field_type is bool and isinstance(field_value, str):
+                    normalized = field_value.strip().lower()
+                    if normalized == 'true':
+                        field_value = True
+                    elif normalized == 'false':
+                        field_value = False
+                    else:
+                        raise ValueError(f"Invalid boolean string for field {field.name}: {field_value}")
                 field_values[field.name] = dict_to_dataclass(field_type, field_value)
         return cls(**field_values)
     except Exception as e:
@@ -194,43 +206,57 @@ class StealthEnhancer:
     def __init__(self, account_id):
         self.account_id = account_id
         self.profiles_dir = "profiles"
-        logger.debug(f"Initializing StealthEnhancer for account {account_id}")
-        self.fingerprint = self.load_fingerprint()
+        logger.debug(f"[Account {self.account_id}] Initializing StealthEnhancer for account {self.account_id}")
+        try:
+            self.fingerprint = self.load_fingerprint(self.account_id)
+            if hasattr(self.fingerprint.navigator, 'globalPrivacyControl'):
+                gpc = self.fingerprint.navigator.globalPrivacyControl
+                logger.debug(f"[Account {self.account_id}] Converted globalPrivacyControl: {gpc} (Type: {type(gpc)})")
+        except Exception as e:
+            logger.error(f"[Account {self.account_id}] Fingerprint validation failed: {str(e)}")
+            raise
 
-    def load_fingerprint(self):
+    def load_fingerprint(self,account_id):
         fingerprint_file = os.path.join(self.profiles_dir, str(self.account_id), f"fingerprint_{self.account_id}.json")
-        logger.debug(f"Loading fingerprint from {fingerprint_file}")
+        logger.debug(f"[Account {account_id}] Loading fingerprint from {fingerprint_file}")
 
         try:
             if not os.path.exists(fingerprint_file):
                 logger.error(f"Fingerprint file not found: {fingerprint_file}")
                 raise FileNotFoundError(f"Fingerprint file not found: {fingerprint_file}")
-
+            
             with open(fingerprint_file, "r") as f:
                 data = json.load(f)
-            logger.debug(f"Fingerprint data loaded: {data}")
+            logger.debug(f"[Account {account_id}] Fingerprint data loaded")
             
+            if 'navigator' in data['fingerprint']:
+                nav_data = data['fingerprint']['navigator']
+                if 'globalPrivacyControl' in nav_data:
+                    gpc_value = nav_data['globalPrivacyControl']
+                    logger.debug(f"[Account {self.account_id}] Raw globalPrivacyControl value: {gpc_value} (Type: {type(gpc_value)})")
+
+
             fingerprint = dict_to_dataclass(Fingerprint, data["fingerprint"])
-            logger.info(f"Successfully loaded fingerprint for account {self.account_id}")
+            logger.info(f"[Account {account_id}] Successfully loaded fingerprint for account {self.account_id}")
             return fingerprint
         except Exception as e:
-            logger.error(f"Failed to load fingerprint: {str(e)}")
+            logger.error(f"[Account {account_id}] Failed to load fingerprint: {str(e)}")
             raise
 
 
 async def upvote_post(account_id: int, post_url: str, proxy_config: Dict[str, Any] = None):
-    logger.info(f"Starting upvote process for account {account_id} on post {post_url}")
+    logger.info(f"[Account {account_id}] : Starting upvote process for account {account_id} on post {post_url}")
     try:
         stealth = StealthEnhancer(account_id)
         cookies_file = os.path.join("profiles", str(account_id), f"cookies_{account_id}.json")
-        logger.debug(f"Loading cookies from {cookies_file}")
+        logger.debug(f"[Account {account_id}] Loading cookies from {cookies_file}")
 
         try:
             with open(cookies_file, "r") as f:
                 cookies = json.load(f)
-            logger.info(f"Cookies loaded successfully for account {account_id}")
+            logger.info(f" [Account {account_id}] Cookies loaded successfully for account {account_id}")
         except Exception as e:
-            logger.error(f"Failed to load cookies: {str(e)}")
+            logger.error(f" [Account {account_id}] Failed to load cookies: {str(e)}")
             raise
 
         config = {
@@ -243,76 +269,76 @@ async def upvote_post(account_id: int, post_url: str, proxy_config: Dict[str, An
         }
         if proxy_config:
             config["proxy"] = proxy_config
-            logger.debug(f"Using proxy configuration: {proxy_config}")
+            logger.debug(f" [Account {account_id}] Using proxy configuration: {proxy_config}")
 
-        logger.debug(f"Browser configuration: {config}")
+        logger.debug(f"[Account {account_id}] Browser configuration")
         # async with AsyncCamoufox(headless="virtual",**config) as browser:
         async with AsyncCamoufox(**config) as browser:
             try:
                 page = await browser.new_page()
-                logger.info(f"New browser page created for account {account_id}")
+                logger.info(f"[Account {account_id}] New browser page created for account {account_id}")
 
                 await page.context.add_cookies(cookies)
-                logger.debug(f"Cookies added to browser context")
+                logger.debug(f"[Account {account_id}] Cookies added to browser context")
 
                 await page.set_extra_http_headers({
                     'Referer': random.choice(['https://www.google.com/', 'https://x.com/', 'https://www.reddit.com/'])
                 })
-                logger.debug("Extra HTTP headers set")
+                logger.debug(f"[Account {account_id}] Extra HTTP headers set")
 
                 await HumanBehavior.random_delay(1000, 3000)
-                logger.info(f"Navigating to Reddit homepage")
+                logger.info(f" [Account {account_id}] Navigating to Reddit homepage")
                 await page.goto('https://www.reddit.com/', wait_until='domcontentloaded')
-                logger.debug("Reddit homepage loaded")
+                logger.debug(f" [Account {account_id}] Reddit homepage loaded")
                 await HumanBehavior.random_delay(500, 1000)
                 await HumanBehavior.human_scroll(page)
                 await HumanBehavior.random_delay(2000, 5000)
 
-                logger.info(f"Navigating to post URL: {post_url}")
+                logger.info(f"[Account {account_id}] Navigating to post URL: {post_url}")
                 await page.goto(post_url)
-                logger.debug(f"Post page loaded: {post_url}")
+                logger.debug(f"[Account {account_id}] Post page loaded: {post_url}")
                 await HumanBehavior.random_delay(8000, 20000)
 
                 upvote_selector = 'button:has(svg[icon-name="upvote-outline"])'
                 voted_selector = 'button:has(svg[icon-name="upvote-fill"])'
-                logger.debug(f"Querying for upvote button with selector: {upvote_selector}")
+                logger.debug(f"[Account {account_id}] Querying for upvote button with selector: {upvote_selector}")
 
                 button = await page.query_selector(upvote_selector)
                 logger.info(button)
                 if button is None:
-                    logger.warning("Upvote button not found, checking if already upvoted")
+                    logger.warning(f"[Account {account_id}] Upvote button not found, checking if already upvoted")
                     voted_button = await page.query_selector(voted_selector)
                     if voted_button:
-                        logger.info(f"Post already upvoted: {post_url}")
+                        logger.info(f"[Account {account_id}] Post already upvoted: {post_url}")
                         await HumanBehavior.random_delay(2000, 3500)
                         return
                     else:
-                        logger.error(f"Neither upvote nor voted button found for {post_url}")
+                        logger.error(f"[Account {account_id}] Neither upvote nor voted button found for {post_url}")
                         raise Exception("Upvote button not found")
 
-                logger.debug("Upvote button found")
+                logger.debug(f"[Account {account_id}] Upvote button found")
                 aria_pressed = await button.get_attribute('aria-pressed')
-                logger.debug(f"Upvote button aria-pressed: {aria_pressed}")
+                logger.debug(f"[Account {account_id}] Upvote button aria-pressed: {aria_pressed}")
 
                 if aria_pressed == "false":
-                    logger.info(f"Post not upvoted, performing upvote: {post_url}")
+                    logger.info(f"[Account {account_id}] Post not upvoted, performing upvote: {post_url}")
                     await button.click()
-                    logger.debug("Upvote button clicked")
+                    logger.debug(f"[Account {account_id}] Upvote button clicked")
                     await HumanBehavior.random_delay(2000, 5000)
 
                     button2 = await page.wait_for_selector(voted_selector, timeout=15000)
                     if button2:
                         aria_pressed2 = await button2.get_attribute('aria-pressed')
                         if aria_pressed2 == "true":
-                            logger.info(f"Successfully upvoted post: {post_url}")
+                            logger.info(f"[Account {account_id}] Successfully upvoted post: {post_url}")
                         else:
-                            logger.error(f"Upvote validation failed, aria-pressed: {aria_pressed2}")
-                            raise Exception("Upvote validation failed")
+                            logger.error(f"[Account {account_id}] Upvote validation failed, aria-pressed: {aria_pressed2}")
+                            raise Exception(f"[Account {account_id}] Upvote validation failed")
                     else:
-                        logger.error("Failed to find upvoted button after click")
-                        raise Exception("Upvoted button not found")
+                        logger.error(f"[Account {account_id}] Failed to find upvoted button after click")
+                        raise Exception(f"[Account {account_id}] Upvoted button not found")
                 else:
-                    logger.info(f"Post already upvoted: {post_url}")
+                    logger.info(f"[Account {account_id}] Post already upvoted: {post_url}")
 
                 await HumanBehavior.random_delay(2000, 5000)
                 random_pages = [
@@ -328,22 +354,22 @@ async def upvote_post(account_id: int, post_url: str, proxy_config: Dict[str, An
                     'https://www.reddit.com/r/DIY/', 'https://www.reddit.com/r/EarthPorn/', 'https://www.reddit.com/r/space/'
                 ]
                 random_page = random.choice(random_pages)
-                logger.info(f"Navigating to random page: {random_page}")
+                logger.info(f"[Account {account_id}] Navigating to random page: {random_page}")
                 await page.goto(random_page)
                 await HumanBehavior.random_delay(1000, 5000)
             except Exception as e:
-                logger.error(f"Error during browser operations for {post_url}: {str(e)}")
+                logger.error(f"[Account {account_id}] Error during browser operations for {post_url}: {str(e)}")
                 raise
             finally:
                 if 'page' in locals():
                     logger.debug("Closing page")
                     await page.close()
     except Exception as e:
-        logger.error(f"Upvote process failed for {post_url}: {str(e)}")
+        logger.error(f"[Account {account_id}] Upvote process failed for {post_url}: {str(e)}")
         raise
 
 async def orchestrate_upvotes(account_id: int, post_urls: list, proxy_config: Dict[str, Any] = None):
-    logger.info(f"Starting upvote orchestration for account {account_id} on {len(post_urls)} posts")
+    logger.info(f"[Account {account_id}] Starting upvote orchestration for account {account_id} on {len(post_urls)} posts")
     try:
         # Calculate time intervals for 24 hours (86400 seconds)
         total_time = 86400  # 24 hours in seconds
@@ -360,33 +386,33 @@ async def orchestrate_upvotes(account_id: int, post_urls: list, proxy_config: Di
             times.append(next_time)
             last_time = next_time
         times.sort()
-        logger.debug(f"Scheduled upvote times: {[datetime.now() + timedelta(seconds=t) for t in times]}")
+        logger.debug(f"[Account {account_id}] Scheduled upvote times: {[datetime.now() + timedelta(seconds=t) for t in times]}")
 
         for i, (post_url, delay) in enumerate(zip(post_urls, times)):
             
             if i == 0:
-                logger.info(f"Immediately executing upvote 1/{max_posts} for {post_url}")
+                logger.info(f"[Account {account_id}] Immediately executing upvote 1/{max_posts} for {post_url}")
             else:
                 wait_time = delay - times[i - 1]
-                logger.info(f"Scheduling upvote {i + 1}/{max_posts} for {post_url} after {wait_time:.2f} seconds")
+                logger.info(f"[Account {account_id}] Scheduling upvote {i + 1}/{max_posts} for {post_url} after {wait_time:.2f} seconds")
                 await asyncio.sleep(wait_time)
 
-            logger.debug(f"Executing upvote for {post_url}")
+            logger.debug(f"[Account {account_id}] Executing upvote for {post_url}")
             
             try:
                 await upvote_post(account_id, post_url)
-                logger.info(f"Completed upvote {i + 1}/{max_posts} for {post_url}")
+                logger.info(f"[Account {account_id}] Completed upvote {i + 1}/{max_posts} for {post_url}")
             except Exception as e:
-                logger.error(f"Failed upvote {i + 1}/{max_posts} for {post_url}: {str(e)}")
+                logger.error(f"[Account {account_id}] Failed upvote {i + 1}/{max_posts} for {post_url}: {str(e)}")
                 continue  # Continue with next post despite error
     except Exception as e:
-        logger.error(f"Orchestration failed: {str(e)}")
+        logger.error(f"[Account {account_id}] Orchestration failed: {str(e)}")
         raise
 
 if __name__ == "__main__":
-    account_id = 6
+    account_id = 5
     post_urls = [
-        "https://www.reddit.com/r/AskReddit/comments/1kkz0zm/if_you_could_switch_lives_with_any_fictional/",
+        "https://www.reddit.com/r/AskReddit/comments/1klog7b/for_men_whats_the_most_attractive_part_of_a/",
     ]
 
     proxy_config = {

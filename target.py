@@ -123,7 +123,7 @@ async def orchestrate_batches(
 
 if __name__ == "__main__":
     
-    post_url = "https://www.reddit.com/r/AskReddit/comments/1kkuvkn/guys_seriously_how_do_you_find_true_love/"
+    post_url = "https://www.reddit.com/r/AskReddit/comments/1klr1iq/what_are_signs_a_girl_likes_you/"
     votes_per_min = 2
     total_votes = 7  
 

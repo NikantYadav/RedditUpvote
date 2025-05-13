@@ -83,6 +83,9 @@ async def run(account_id: int, proxy_config: Dict[str, Any] = None):
         # Load existing fingerprint
         with open(fingerprint_file, "r") as f:
             fingerprint_dict = json.load(f)
+        
+        
+        
         fingerprint = dict_to_dataclass(Fingerprint, fingerprint_dict["fingerprint"])
         print(f"✅ Loaded fingerprint for account {account_id} from {fingerprint_file}")
 
@@ -91,7 +94,13 @@ async def run(account_id: int, proxy_config: Dict[str, Any] = None):
         fg = FingerprintGenerator(browser='firefox')
         fingerprint = fg.generate()
         # Save fingerprint with account ID
-        fingerprint_data = {"id": account_id, "fingerprint": asdict(fingerprint)}
+        fingerprint_dict = asdict(fingerprint)
+        if 'navigator' in fingerprint_dict:
+            # Restructure the navigator data
+            fingerprint_dict['navigator']['globalPrivacyControl'] = \
+                fingerprint_dict['navigator']['extraProperties'].pop('globalPrivacyControl', False)
+
+        fingerprint_data = {"id": account_id, "fingerprint": fingerprint_dict}
         print(fingerprint_data)
 
         fingerprint_dir = os.path.dirname(fingerprint_file)
