@@ -9,26 +9,131 @@ from camoufox.async_api import AsyncCamoufox
 from dataclasses import asdict
 from typing import Any, Dict
 
+# Reddit-inspired color scheme
+REDDIT_COLORS = {
+    "primary": "#1A1A1B",       # Dark background
+    "secondary": "#272729",     # Secondary background
+    "accent": "#FF4500",        # Reddit orange
+    "text": "#D7DADC",          # Light text
+    "border": "#343536"         # Border color
+}
+
 desired_folder = "profiles"
 os.makedirs(desired_folder, exist_ok=True)
 
-# GUI init
-ctk.set_appearance_mode("System")
-ctk.set_default_color_theme("blue")
+# Configure appearance
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme("dark-blue")  # Use dark-blue as base theme
+
 app = ctk.CTk()
 app.title("Reddit Proxy Runner")
-app.geometry("500x600")
+app.geometry("800x700")
+app.configure(fg_color=REDDIT_COLORS["primary"])
 
-# Text logger widget
-log_output = ctk.CTkTextbox(app, height=200, wrap="word")
-log_output.pack(pady=10, padx=20)
+# Font configuration
+bold_font = ctk.CTkFont(family="Arial", size=14, weight="bold")
+title_font = ctk.CTkFont(family="Arial", size=24, weight="bold")
+
+# Main container
+main_frame = ctk.CTkFrame(app, fg_color="transparent")
+main_frame.pack(pady=20, padx=40, fill="both", expand=True)
+
+# Header
+ctk.CTkLabel(
+    main_frame,
+    text="REDDIT PROXY RUNNER",
+    font=title_font,
+    text_color=REDDIT_COLORS["accent"]
+).pack(pady=(0, 20))
+
+# Input Section
+input_frame = ctk.CTkFrame(
+    main_frame,
+    fg_color=REDDIT_COLORS["secondary"],
+    corner_radius=8,
+    border_color=REDDIT_COLORS["border"],
+    border_width=1
+)
+input_frame.pack(fill="x", pady=(0, 20))
+
+# Form fields
+form_elements = [
+    ("Account ID", "account_id"),
+    ("Proxy Server (IP:Port)", "proxy_server"),
+    ("Proxy Username", "proxy_username"),
+    ("Proxy Password", "proxy_password"),
+    ("Reddit Username", "reddit_username")
+]
+
+entries = {}
+for idx, (label, name) in enumerate(form_elements):
+    ctk.CTkLabel(
+        input_frame,
+        text=label + ":",
+        font=bold_font,
+        text_color=REDDIT_COLORS["text"]
+    ).grid(row=idx, column=0, padx=20, pady=10, sticky="w")
+    
+    entry = ctk.CTkEntry(
+        input_frame,
+        width=500,
+        font=bold_font,
+        corner_radius=6,
+        border_color=REDDIT_COLORS["border"],
+        fg_color=REDDIT_COLORS["primary"],
+        text_color=REDDIT_COLORS["text"],
+        show="*" if "password" in name else ""
+    )
+    entry.grid(row=idx, column=1, padx=20, pady=10)
+    entries[name] = entry
+
+# Button Section
+button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+button_frame.pack(pady=20)
+
+run_button = ctk.CTkButton(
+    button_frame,
+    text="🚀 RUN",
+    command=lambda: on_run_click(),
+    width=120,
+    height=40,
+    font=bold_font,
+    corner_radius=8,
+    fg_color=REDDIT_COLORS["accent"],
+    hover_color="#FF5714",
+    text_color=REDDIT_COLORS["text"]
+)
+run_button.pack(side="left", padx=10)
+
+exit_button = ctk.CTkButton(
+    button_frame,
+    text="🔒 EXIT & SAVE",
+    command=lambda: exit_and_save(),
+    width=120,
+    height=40,
+    font=bold_font,
+    corner_radius=8,
+    fg_color="#4A4A4A",
+    hover_color="#5A5A5A",
+    text_color=REDDIT_COLORS["text"]
+)
+exit_button.pack(side="left", padx=10)
+
+# Log Section
+log_output = ctk.CTkTextbox(
+    main_frame,
+    wrap="word",
+    fg_color=REDDIT_COLORS["secondary"],
+    text_color=REDDIT_COLORS["text"],
+    font=ctk.CTkFont(family="Consolas", size=12),
+    corner_radius=8,
+    height=200
+)
+log_output.pack(fill="both", expand=True, pady=(10, 0))
 
 def clear_fields_and_log():
-    entry_account_id.delete(0, "end")
-    entry_proxy_server.delete(0, "end")
-    entry_proxy_username.delete(0, "end")
-    entry_proxy_password.delete(0, "end")
-    entry_reddit_username.delete(0, "end")
+    for entry in entries.values():
+        entry.delete(0, "end")
     log_output.delete("1.0", "end")
 
 def log(message: str):
@@ -125,11 +230,11 @@ async def run_async(account_id: int, reddit_username: str, proxy_config: Dict[st
                 await browser.close()
 
 def on_run_click():
-    account_id = entry_account_id.get().strip()
-    proxy_server = entry_proxy_server.get().strip()
-    proxy_username = entry_proxy_username.get().strip()
-    proxy_password = entry_proxy_password.get().strip()
-    reddit_username = entry_reddit_username.get().strip()
+    account_id = entries["account_id"].get().strip()
+    proxy_server = entries["proxy_server"].get().strip()
+    proxy_username = entries["proxy_username"].get().strip()
+    proxy_password = entries["proxy_password"].get().strip()
+    reddit_username = entries["reddit_username"].get().strip()
 
     if not (account_id and reddit_username):
         log("❌ Account ID and Reddit Username are required.")
@@ -146,27 +251,5 @@ def on_run_click():
 
     Thread(target=start_asyncio_loop).start()
 
-# Inputs
-entry_account_id = ctk.CTkEntry(app, placeholder_text="Account ID")
-entry_account_id.pack(pady=5, padx=20)
-
-entry_proxy_server = ctk.CTkEntry(app, placeholder_text="Proxy Server (IP:Port)")
-entry_proxy_server.pack(pady=5, padx=20)
-
-entry_proxy_username = ctk.CTkEntry(app, placeholder_text="Proxy Username")
-entry_proxy_username.pack(pady=5, padx=20)
-
-entry_proxy_password = ctk.CTkEntry(app, placeholder_text="Proxy Password", show="*")
-entry_proxy_password.pack(pady=5, padx=20)
-
-entry_reddit_username = ctk.CTkEntry(app, placeholder_text="Reddit Username")
-entry_reddit_username.pack(pady=5, padx=20)
-
-# Buttons
-run_button = ctk.CTkButton(app, text="Run", command=on_run_click)
-run_button.pack(pady=10)
-
-exit_button = ctk.CTkButton(app, text="Exit & Save", command=exit_and_save)
-exit_button.pack(pady=5)
-
 app.mainloop()
+
