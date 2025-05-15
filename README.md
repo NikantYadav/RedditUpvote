@@ -14,3 +14,7 @@ Upgrades:
 
 ## Practices for Adding new account
 - Scrolling, and opening different websites, posts to generate better cookies
+
+
+### Fixes to make
+- Logging in voting process :  Account wise, removing extra logging
