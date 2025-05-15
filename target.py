@@ -1,15 +1,12 @@
 import asyncio
 import json
-import os
-import random
 import logging
-from dataclasses import asdict, is_dataclass, fields
-from typing import Any, Dict, get_type_hints
-from browserforge.fingerprints import Fingerprint, Screen
-from camoufox.async_api import AsyncCamoufox
+import random
 from datetime import datetime, timedelta
-from vote import upvote_post
+from vote import upvote_post  # Ensure this is your actual upvote function
 
+# File to store the account state
+STATE_FILE = 'account_state.json'
 
 logging.basicConfig(
     level=logging.DEBUG,  
@@ -21,8 +18,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def load_state():
+    """Load account state from file."""
+    try:
+        with open(STATE_FILE, 'r') as file:
+            return json.load(file)
+    except FileNotFoundError:
+        # If the file doesn't exist, return an empty state
+        logger.info(f"{STATE_FILE} not found, creating a new one.")
+        save_state({})
+        return {}
 
-# ... (keep previous imports and setup)
+def save_state(state):
+    """Save account state to file."""
+    with open(STATE_FILE, 'w') as file:
+        json.dump(state, file, default=str, indent=4)
 
 async def orchestrate_batches(
     post_url: str,
@@ -33,11 +43,13 @@ async def orchestrate_batches(
     min_gap_minutes: int = 30
 ):
     """
-    Orchestrate upvotes in batches with enhanced account-wise logging
+    Orchestrate upvotes in batches with enhanced account-wise logging.
+    Keeps account state persistent across requests.
     """
     
-    last_upvote = {acc: datetime.min for acc in account_ids}
-    daily_count = {acc: 0 for acc in account_ids}
+    state = load_state()
+    last_upvote = {acc: datetime.fromisoformat(state.get(str(acc), {}).get('last_upvote', '1970-01-01T00:00:00')) for acc in account_ids}
+    daily_count = {acc: state.get(str(acc), {}).get('daily_count', 0) for acc in account_ids}
     votes_done = 0
     min_gap = timedelta(minutes=min_gap_minutes)
 
@@ -110,6 +122,15 @@ async def orchestrate_batches(
         logger.info(f"Batch completed: {success_count} successes, {len(batch)-success_count} failures")
         logger.info(f"Total progress: {votes_done}/{total_votes} ({votes_done/total_votes:.1%})")
 
+        # Save the updated state to the file after each batch
+        state = {
+            str(acc): {
+                'last_upvote': last_upvote[acc].isoformat(),
+                'daily_count': daily_count[acc]
+            } for acc in account_ids
+        }
+        save_state(state)
+
         # Wait for next batch
         elapsed = (datetime.now() - now).total_seconds()
         if elapsed < 60:
@@ -119,7 +140,6 @@ async def orchestrate_batches(
 
     logger.info("All batches completed successfully")
 
-# ... (keep rest of the code unchanged)
 
 if __name__ == "__main__":
     

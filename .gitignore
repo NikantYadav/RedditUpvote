@@ -6,5 +6,6 @@ testaccounts/
 profiles/
 reddit_stealth.log
 chrome/
+account_state.json
 
 __pycache__/
