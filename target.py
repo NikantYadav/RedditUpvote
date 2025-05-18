@@ -4,7 +4,7 @@ import logging
 import random
 from datetime import datetime, timedelta
 from vote import upvote_post  # Ensure this is your actual upvote function
-
+import os
 # File to store the account state
 STATE_FILE = 'account_state.json'
 
@@ -22,23 +22,55 @@ def load_state():
     """Load account state from file."""
     try:
         with open(STATE_FILE, 'r') as file:
-            return json.load(file)
+            content = file.read().strip()
+            if not content:
+                logger.warning(f"{STATE_FILE} is empty. Initializing with empty state.")
+                save_state({})
+                return {}
+            return json.loads(content)
     except FileNotFoundError:
-        # If the file doesn't exist, return an empty state
         logger.info(f"{STATE_FILE} not found, creating a new one.")
         save_state({})
         return {}
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error in {STATE_FILE}: {e}")
+        save_state({})
+        return {}
+
 
 def save_state(state):
     """Save account state to file."""
     with open(STATE_FILE, 'w') as file:
         json.dump(state, file, default=str, indent=4)
 
+def load_accounts(file_path='profiles/accounts.json'):
+    try:
+        logger.info(f"Loading accounts from: {os.path.abspath(file_path)}")
+        
+        if not os.path.exists(file_path):
+            logger.error(f"File does not exist: {os.path.abspath(file_path)}")
+            return {}
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            raw_content = f.read()
+            if not raw_content.strip():
+                logger.error("File is empty!")
+                return {}
+                
+            return json.loads(raw_content)
+            
+    except Exception as e:
+        logger.error(f"Critical error: {str(e)}", exc_info=True)
+        return {}
+  
+
+
 async def orchestrate_batches(
     post_url: str,
     account_ids: list,
     votes_per_min: int,
     total_votes: int,
+    account_data: dict,
     max_daily_per_account: int = 5,
     min_gap_minutes: int = 30
 ):
@@ -98,7 +130,23 @@ async def orchestrate_batches(
 
         # Process batch
         logger.info(f"Starting upvote batch processing")
-        tasks = [upvote_post(acc, post_url) for acc in batch]
+        tasks = []
+        for acc in batch:
+            try:
+                account = account_data[str(acc)]
+                print(account)
+                proxy_config = account.get('proxy', {})
+                logger.debug(proxy_config)
+                tasks.append(
+                    upvote_post(
+                        acc,
+                        post_url,
+                        proxy_config=proxy_config
+                    )
+                )
+            except KeyError:
+                logger.error(f"Account {acc} not found in account data")
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Process results with detailed logging
@@ -143,12 +191,12 @@ async def orchestrate_batches(
 
 if __name__ == "__main__":
     
-    post_url = "https://www.reddit.com/r/AskReddit/comments/1klr1iq/what_are_signs_a_girl_likes_you/"
+    post_url = "https://www.reddit.com/r/AppearanceAdvice/comments/1kpcn8p/got_called_fat_and_unattractive_what_can_i_do_to/"
     votes_per_min = 2
-    total_votes = 7  
+    total_votes = 4
 
     account_ids = range(1, 7)
-
+    account_data = load_accounts('profiles/accounts.json')
     try:
         logger.info("Starting batch upvoting session")
         asyncio.run(
@@ -156,7 +204,8 @@ if __name__ == "__main__":
                 post_url=post_url,
                 account_ids=account_ids,
                 votes_per_min=votes_per_min,
-                total_votes=total_votes
+                total_votes=total_votes,
+                account_data=account_data
             )
         )
 

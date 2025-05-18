@@ -227,6 +227,8 @@ class StealthEnhancer:
             
             with open(fingerprint_file, "r") as f:
                 data = json.load(f)
+                if not data.get('fingerprint'):
+                    raise ValueError("Invalid fingerprint structure")
             logger.debug(f"[Account {account_id}] Fingerprint data loaded")
             
             if 'navigator' in data['fingerprint']:

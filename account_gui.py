@@ -2,7 +2,7 @@ import customtkinter as ctk
 import asyncio
 import os
 import json
-from threading import Thread
+from threading import Thread, Lock
 from account import dict_to_dataclass
 from browserforge.fingerprints import FingerprintGenerator, Fingerprint, Screen
 from camoufox.async_api import AsyncCamoufox
@@ -33,6 +33,12 @@ app.configure(fg_color=REDDIT_COLORS["primary"])
 # Font configuration
 bold_font = ctk.CTkFont(family="Arial", size=14, weight="bold")
 title_font = ctk.CTkFont(family="Arial", size=24, weight="bold")
+
+
+# Global variables for cross-thread communication
+current_loop = None
+current_event = None
+loop_lock = Lock()
 
 # Main container
 main_frame = ctk.CTkFrame(app, fg_color="transparent")
@@ -143,11 +149,18 @@ def log(message: str):
 manual_completion_event = None  # will be set later
 
 def exit_and_save():
-    if manual_completion_event:
-        manual_completion_event.set()
+    log("Exit button clicked")
+    global current_loop, current_event
+    with loop_lock:
+        if current_event and current_loop:
+            current_loop.call_soon_threadsafe(current_event.set)
+            log("✓ Exit signal sent to browser instance")
+        else:
+            log("❌ No active session to exit and save")
+
 
 async def run_async(account_id: int, reddit_username: str, proxy_config: Dict[str, Any]):
-    global manual_completion_event
+    global current_loop, current_event
     fingerprint_file = os.path.join(desired_folder, str(account_id), f"fingerprint_{account_id}.json")
 
     # Load or create fingerprint
@@ -181,53 +194,66 @@ async def run_async(account_id: int, reddit_username: str, proxy_config: Dict[st
     if proxy_config:
         camoufox_config["proxy"] = proxy_config
 
-    manual_completion_event = asyncio.Event()
-    async with AsyncCamoufox(**camoufox_config) as browser:
-        page = await browser.new_page()
-        cookies_file = os.path.join(desired_folder, str(account_id), f"cookies_{account_id}.json")
-        if os.path.exists(cookies_file):
-            with open(cookies_file, "r") as f:
-                cookies = json.load(f)
-            await page.context.add_cookies(cookies)
-            log(f"✅ Loaded cookies for account {account_id}")
-        else:
-            try:
-                await page.goto("https://www.reddit.com", timeout=60000, wait_until="networkidle")
-                log("✅ Loaded Reddit")
-                log("========== INSTRUCTIONS ==========")
-                log("1. Log in to Reddit in the opened browser")
-                log("2. Return to this window and click 'Exit & Save'")
-                log("===================================")
-                await manual_completion_event.wait()
+    #manual_completion_event = asyncio.Event()
 
-                # Save cookies
-                cookies = await page.context.cookies()
-                with open(cookies_file, "w") as f:
-                    json.dump(cookies, f, indent=2)
-                log(f"✅ Cookies saved to {cookies_file}")
+    with loop_lock:
+        current_event = asyncio.Event()
+        current_loop = asyncio.get_running_loop()
 
-                # Save account info
-                accounts_file = os.path.join(desired_folder, "accounts.json")
-                if os.path.exists(accounts_file):
-                    with open(accounts_file, "r") as f:
-                        accounts_data = json.load(f)
-                else:
-                    accounts_data = {}
+    try:
+        async with AsyncCamoufox(**camoufox_config) as browser:
+            page = await browser.new_page()
+            cookies_file = os.path.join(desired_folder, str(account_id), f"cookies_{account_id}.json")
+            if os.path.exists(cookies_file):
+                with open(cookies_file, "r") as f:
+                    cookies = json.load(f)
+                await page.context.add_cookies(cookies)
+                log(f"✅ Loaded cookies for account {account_id}")
+            else:
+                try:
+                    await page.goto("https://www.reddit.com", timeout=60000, wait_until="networkidle")
+                    log("✅ Loaded Reddit")
+                    log("========== INSTRUCTIONS ==========")
+                    log("1. Log in to Reddit in the opened browser")
+                    log("2. Return to this window and click 'Exit & Save'")
+                    log("===================================")
+                    await current_event.wait()
 
-                accounts_data[str(account_id)] = {
-                    "account_id": account_id,
-                    "reddit_username": reddit_username,
-                    "proxy": proxy_config or {}
-                }
-                with open(accounts_file, "w") as f:
-                    json.dump(accounts_data, f, indent=2)
-                log(f"✅ Account info updated")
-                log("✅ Task complete. Clearing fields...")
-                app.after(500, clear_fields_and_log)
-            except Exception as e:
-                log(f"❌ Error: {e}")
-            finally:
-                await browser.close()
+                    # Save cookies
+                    cookies = await page.context.cookies()
+                    with open(cookies_file, "w") as f:
+                        json.dump(cookies, f, indent=2)
+                    log(f"✅ Cookies saved to {cookies_file}")
+
+                    # Save account info
+                    accounts_file = os.path.join(desired_folder, "accounts.json")
+                    if os.path.exists(accounts_file):
+                        with open(accounts_file, "r") as f:
+                            accounts_data = json.load(f)
+                    else:
+                        accounts_data = {}
+
+                    accounts_data[str(account_id)] = {
+                        "account_id": account_id,
+                        "reddit_username": reddit_username,
+                        "proxy": proxy_config or {}
+                    }
+                    with open(accounts_file, "w") as f:
+                        json.dump(accounts_data, f, indent=2)
+                    log(f"✅ Account info updated")
+                    log("✅ Task complete. Clearing fields...")
+                    app.after(500, clear_fields_and_log)
+                except Exception as e:
+                    log(f"❌ Error: {e}")
+                finally:
+                    await browser.close()
+    except Exception as e:
+        log(f"Critical Error : {str(e)}")
+    finally:
+        with loop_lock:
+            current_loop = None
+            current_event = None
+
 
 def on_run_click():
     account_id = entries["account_id"].get().strip()

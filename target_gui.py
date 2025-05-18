@@ -4,6 +4,8 @@ import logging
 import threading
 from datetime import datetime
 from target import orchestrate_batches
+import json
+import os
 
 # Setup standard logging
 logging.basicConfig(
@@ -12,6 +14,29 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
+
+def load_accounts(file_path='profiles/accounts.json'):
+    try:
+        logger.info(f"Loading accounts from: {os.path.abspath(file_path)}")
+        
+        if not os.path.exists(file_path):
+            logger.error(f"File does not exist: {os.path.abspath(file_path)}")
+            return {}
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            raw_content = f.read()
+            logger.info(f"Raw file content:\n---\n{raw_content}\n---")  # <-- THIS SHOWS ACTUAL CONTENT
+            
+            if not raw_content.strip():
+                logger.error("File is empty!")
+                return {}
+                
+            return json.loads(raw_content)
+            
+    except Exception as e:
+        logger.error(f"Critical error: {str(e)}", exc_info=True)
+        return {}
+    
 
 # Reddit-inspired color scheme
 COLORS = {
@@ -96,6 +121,8 @@ class UpvoteApp(ctk.CTk):
             ("Account IDs", "e.g., 1-5 or 1,2,3")
         ]
 
+        entries = []
+
         for idx, (label, placeholder) in enumerate(form_elements):
             ctk.CTkLabel(
                 input_frame,
@@ -115,13 +142,14 @@ class UpvoteApp(ctk.CTk):
                 text_color=COLORS["text"]
             )
             entry.grid(row=idx, column=1, padx=20, pady=10)
+            entries.append(entry)
 
         # Start button
         start_button = ctk.CTkButton(
             container,
             text="🔼 START UPVOTING",
             command=lambda: self.start_upvoting_threaded(
-                *[input_frame.children[f"!ctkentry{i+1}"] for i in range(4)],
+                *entries,  # Use the stored entry references
                 instance_window
             ),
             width=300,
@@ -194,12 +222,19 @@ class UpvoteApp(ctk.CTk):
         self.log(f"⚙️  Votes/min: {votes_per_min}, Total: {total_votes}", instance_window)
         self.log(f"👥 Using Accounts: {account_ids}", instance_window)
 
+        self.log("Loading Account Data", instance_window)
+
+        account_data = load_accounts()
+        if not account_data:
+            self.log("❌ No valid account data loaded. Check accounts.json", instance_window, COLORS["danger"])
+            return
         try:
             await orchestrate_batches(
                 post_url=post_url,
                 account_ids=account_ids,
                 votes_per_min=votes_per_min,
-                total_votes=total_votes
+                total_votes=total_votes,
+                account_data=account_data
             )
             self.log("✅ Upvoting completed.", instance_window, COLORS["success"])
         except Exception as e:
