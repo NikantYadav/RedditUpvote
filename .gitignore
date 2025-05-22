@@ -7,5 +7,9 @@ profiles/
 reddit_stealth.log
 chrome/
 account_state.json
+account_gui.spec
+target_gui.spec
 
 __pycache__/
+build/
+dist/

@@ -411,16 +411,150 @@ async def orchestrate_upvotes(account_id: int, post_urls: list, proxy_config: Di
         logger.error(f"[Account {account_id}] Orchestration failed: {str(e)}")
         raise
 
+
+
+async def upvote_post_low_data(account_id: int, post_url: str, proxy_config: Dict[str, Any] = None):
+    logger.info(f"[Account {account_id}] : Starting upvote process for account {account_id} on post {post_url}")
+    try:
+        stealth = StealthEnhancer(account_id)
+        cookies_file = os.path.join("profiles", str(account_id), f"cookies_{account_id}.json")
+        logger.debug(f"[Account {account_id}] Loading cookies from {cookies_file}")
+
+        try:
+            with open(cookies_file, "r") as f:
+                cookies = json.load(f)
+            logger.info(f" [Account {account_id}] Cookies loaded successfully for account {account_id}")
+        except Exception as e:
+            logger.error(f" [Account {account_id}] Failed to load cookies: {str(e)}")
+            raise
+
+        config = {
+            "fingerprint": stealth.fingerprint,
+            "headless": "virtual",
+            "os": "windows",
+            "screen": Screen(max_width=1280, max_height=720),
+            "geoip": True,
+            "humanize": True,
+            "block_images": True,
+            "i_know_what_im_doing": True
+        }
+
+        if proxy_config:
+            config["proxy"] = proxy_config
+            logger.debug(f" [Account {account_id}] Using proxy configuration: {proxy_config}")
+
+        logger.debug(f"[Account {account_id}] Browser configuration")
+        # async with AsyncCamoufox(headless="virtual",**config) as browser:
+        async with AsyncCamoufox(**config) as browser:
+            try:
+                page = await browser.new_page()
+                logger.info(f"[Account {account_id}] New browser page created for account {account_id}")
+
+                await page.context.add_cookies(cookies)
+                logger.debug(f"[Account {account_id}] Cookies added to browser context")
+
+                await page.set_extra_http_headers({
+                    'Referer': random.choice(['https://www.google.com/', 'https://x.com/', 'https://www.reddit.com/'])
+                })
+                logger.debug(f"[Account {account_id}] Extra HTTP headers set")
+
+                await HumanBehavior.random_delay(1000, 3000)
+                logger.info(f" [Account {account_id}] Navigating to Reddit homepage")
+                await page.goto('https://www.reddit.com/', wait_until='domcontentloaded')
+                logger.debug(f" [Account {account_id}] Reddit homepage loaded")
+                await HumanBehavior.random_delay(500, 1000)
+                await HumanBehavior.human_scroll(page)
+                await HumanBehavior.random_delay(2000, 5000)
+
+                logger.info(f"[Account {account_id}] Navigating to post URL: {post_url}")
+                await page.goto(post_url)
+                logger.debug(f"[Account {account_id}] Post page loaded: {post_url}")
+                await HumanBehavior.random_delay(8000, 20000)
+
+                upvote_selector = 'button:has(svg[icon-name="upvote-outline"])'
+                voted_selector = 'button:has(svg[icon-name="upvote-fill"])'
+                logger.debug(f"[Account {account_id}] Querying for upvote button with selector: {upvote_selector}")
+
+                button = await page.query_selector(upvote_selector)
+                logger.info(button)
+                if button is None:
+                    logger.warning(f"[Account {account_id}] Upvote button not found, checking if already upvoted")
+                    voted_button = await page.query_selector(voted_selector)
+                    if voted_button:
+                        logger.info(f"[Account {account_id}] Post already upvoted: {post_url}")
+                        await HumanBehavior.random_delay(2000, 3500)
+                        return
+                    else:
+                        logger.error(f"[Account {account_id}] Neither upvote nor voted button found for {post_url}")
+                        raise Exception("Upvote button not found")
+
+                logger.debug(f"[Account {account_id}] Upvote button found")
+                aria_pressed = await button.get_attribute('aria-pressed')
+                logger.debug(f"[Account {account_id}] Upvote button aria-pressed: {aria_pressed}")
+
+                if aria_pressed == "false":
+                    logger.info(f"[Account {account_id}] Post not upvoted, performing upvote: {post_url}")
+                    await button.click()
+                    logger.debug(f"[Account {account_id}] Upvote button clicked")
+                    await HumanBehavior.random_delay(2000, 5000)
+
+                    button2 = await page.wait_for_selector(voted_selector, timeout=15000)
+                    if button2:
+                        aria_pressed2 = await button2.get_attribute('aria-pressed')
+                        if aria_pressed2 == "true":
+                            logger.info(f"[Account {account_id}] Successfully upvoted post: {post_url}")
+                        else:
+                            logger.error(f"[Account {account_id}] Upvote validation failed, aria-pressed: {aria_pressed2}")
+                            raise Exception(f"[Account {account_id}] Upvote validation failed")
+                    else:
+                        logger.error(f"[Account {account_id}] Failed to find upvoted button after click")
+                        raise Exception(f"[Account {account_id}] Upvoted button not found")
+                else:
+                    logger.info(f"[Account {account_id}] Post already upvoted: {post_url}")
+
+                await HumanBehavior.random_delay(2000, 5000)
+                random_pages = [
+                    'https://www.reddit.com/', 'https://www.reddit.com/r/popular/', 'https://www.reddit.com/r/all/',
+                    'https://www.reddit.com/r/AskReddit/', 'https://www.reddit.com/r/funny/', 'https://www.reddit.com/r/science/',
+                    'https://www.reddit.com/r/technology/', 'https://www.reddit.com/r/worldnews/', 'https://www.reddit.com/r/movies/',
+                    'https://www.reddit.com/r/gaming/', 'https://www.reddit.com/r/todayilearned/', 'https://www.reddit.com/r/pics/',
+                    'https://www.reddit.com/r/aww/', 'https://www.reddit.com/r/Showerthoughts/', 'https://www.reddit.com/r/interestingasfuck/',
+                    'https://www.reddit.com/r/AskScience/', 'https://www.reddit.com/r/MadeMeSmile/', 'https://www.reddit.com/r/mildlyinteresting/',
+                    'https://www.reddit.com/r/dataisbeautiful/', 'https://www.reddit.com/r/InternetIsBeautiful/', 'https://www.reddit.com/r/HistoryPorn/',
+                    'https://www.reddit.com/r/wholesomememes/', 'https://www.reddit.com/r/NoStupidQuestions/', 'https://www.reddit.com/r/TrueOffMyChest/',
+                    'https://www.reddit.com/r/lifeprotips/', 'https://www.reddit.com/r/explainlikeimfive/', 'https://www.reddit.com/r/nottheonion/',
+                    'https://www.reddit.com/r/DIY/', 'https://www.reddit.com/r/EarthPorn/', 'https://www.reddit.com/r/space/'
+                ]
+                random_page = random.choice(random_pages)
+                logger.info(f"[Account {account_id}] Navigating to random page: {random_page}")
+                await page.goto(random_page)
+                await HumanBehavior.random_delay(1000, 5000)
+            except Exception as e:
+                logger.error(f"[Account {account_id}] Error during browser operations for {post_url}: {str(e)}")
+                raise
+            finally:
+                if 'page' in locals():
+                    logger.debug("Closing page")
+                    await page.close()
+    except Exception as e:
+        logger.error(f"[Account {account_id}] Upvote process failed for {post_url}: {str(e)}")
+        raise
+
+
 if __name__ == "__main__":
-    account_id = 5
+    account_id = 1
     post_urls = [
-        "https://www.reddit.com/r/AskReddit/comments/1klog7b/for_men_whats_the_most_attractive_part_of_a/",
+        "https://www.reddit.com/r/JEENEETards/comments/1ksbzuv/a_friend_of_mine_of_class_5_messaged_me_after_8/",
     ]
 
+    # proxy_config = {
+    #     "server": "http://82.23.88.209:7965",  # Replace with actual proxy server
+    #     "username": "pstvdsop",                   # Replace with actual username
+    #     "password": "vic5dg5kklfd"   
+    # }
+
     proxy_config = {
-        "server": "http://82.23.88.209:7965",  # Replace with actual proxy server
-        "username": "pstvdsop",                   # Replace with actual username
-        "password": "vic5dg5kklfd"   
+        "server" :"http://127.0.0.1:8081"
     }
     
     try:
@@ -433,3 +567,4 @@ if __name__ == "__main__":
         logger.error(f"Upvoting session failed: {str(e)}")
     finally:
         logger.info("Program execution ended")
+        
