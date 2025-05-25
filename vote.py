@@ -430,7 +430,7 @@ async def upvote_post_low_data(account_id: int, post_url: str, proxy_config: Dic
 
         config = {
             "fingerprint": stealth.fingerprint,
-            "headless": "virtual",
+            "headless": False,
             "os": "windows",
             "screen": Screen(max_width=1280, max_height=720),
             "geoip": True,
