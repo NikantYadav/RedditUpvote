@@ -65,7 +65,7 @@ input_frame.pack(fill="x", pady=(0, 20))
 # Form fields
 form_elements = [
     ("Account ID", "account_id"),
-    ("Proxy Server (IP:Port)", "proxy_server"),
+    ("Proxy Server (http://IP:Port)", "proxy_server"),
     ("Proxy Username", "proxy_username"),
     ("Proxy Password", "proxy_password"),
     ("Reddit Username", "reddit_username")

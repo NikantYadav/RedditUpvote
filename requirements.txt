@@ -11,7 +11,7 @@ cffi==1.17.1
 charset-normalizer==3.4.2
 click==8.1.8
 curl_cffi==0.10.0
-customtkinter=5.2.2
+customtkinter==5.2.2
 Deprecated==1.2.18
 emunium==2.1.0
 exceptiongroup==1.2.2
